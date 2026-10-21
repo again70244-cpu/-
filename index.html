@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>每日對帳</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --text: #1f2328;
+    --muted: #656d76;
+    --border: #d0d7de;
+    --accent: #0969da;
+    --ok: #1a7f37;
+    --ok-bg: #dafbe1;
+    --bad: #cf222e;
+    --bad-bg: #ffebe9;
+    --warn: #9a6700;
+    --warn-bg: #fff8c5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --card: #161b22;
+      --text: #e6edf3;
+      --muted: #8d96a0;
+      --border: #30363d;
+      --accent: #4493f8;
+      --ok: #3fb950;
+      --ok-bg: #12261e;
+      --bad: #f85149;
+      --bad-bg: #2d1214;
+      --warn: #d29922;
+      --warn-bg: #272115;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+  }
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  header h1 { margin: 0; font-size: 18px; }
+  nav { display: flex; gap: 4px; }
+  nav button { border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  nav button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+  }
+  .card h2 { margin: 0 0 10px; font-size: 16px; }
+  .card h2 small { color: var(--muted); font-weight: normal; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  label { display: block; font-size: 14px; color: var(--muted); }
+  input, textarea, select {
+    width: 100%;
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-top: 2px;
+  }
+  input.num { text-align: right; font-variant-numeric: tabular-nums; }
+  textarea { min-height: 70px; resize: vertical; }
+  button {
+    font: inherit; font-size: 15px;
+    border-radius: 6px; padding: 8px 14px;
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.danger { color: var(--bad); }
+  button.small { padding: 4px 10px; font-size: 14px; white-space: nowrap; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 4px; border-bottom: 1px solid var(--border); text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  th { font-size: 13px; color: var(--muted); font-weight: normal; }
+  td input { margin: 0; }
+  .total-row td { font-weight: 700; border-bottom: none; }
+  .msg { border-radius: 6px; padding: 8px 10px; margin-top: 10px; font-size: 14px; }
+  .msg.ok { background: var(--ok-bg); color: var(--ok); }
+  .msg.bad { background: var(--bad-bg); color: var(--bad); }
+  .msg.warn { background: var(--warn-bg); color: var(--warn); }
+  .diff-ok { color: var(--ok); font-weight: 700; }
+  .diff-bad { color: var(--bad); font-weight: 700; }
+  .row-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .hidden { display: none !important; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .badge { display: inline-block; border-radius: 10px; padding: 0 8px; font-size: 13px; }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); }
+  .badge.bad { background: var(--bad-bg); color: var(--bad); }
+  .table-wrap { overflow-x: auto; }
+  @media print {
+    header nav, .row-actions, .no-print, button { display: none !important; }
+    body { background: #fff; color: #000; }
+    .card { border-color: #999; break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>每日對帳</h1>
+  <nav>
+    <button type="button" data-view="entry" class="active">今日對帳</button>
+    <button type="button" data-view="history">歷史紀錄</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ===== 今日對帳 ===== -->
+  <section id="view-entry">
+    <div id="editing-banner" class="msg warn hidden"></div>
+
+    <div class="card">
+      <h2>基本資料</h2>
+      <div class="grid">
+        <label>日期<input type="date" id="date"></label>
+        <label>收銀台／攤位<input type="text" id="station" placeholder="例：1 號櫃台"></label>
+        <label>點收人<input type="text" id="cashier" placeholder="姓名"></label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>1. POS 對帳單 <small>照列印的日結單輸入</small></h2>
+      <div class="grid">
+        <label>現金<input class="num" id="posCash" inputmode="numeric" type="number"></label>
+        <label>刷卡<input class="num" id="posCard" inputmode="numeric" type="number"></label>
+        <label>禮券<input class="num" id="posVoucher" inputmode="numeric" type="number"></label>
+        <label>總額<input class="num" id="posTotal" inputmode="numeric" type="number"></label>
+      </div>
+      <div id="posCheck" class="msg hidden"></div>
+    </div>
+
+    <div class="card">
+      <h2>2. 現金點收 <small>輸入各面額張數／枚數</small></h2>
+      <table>
+        <thead><tr><th>面額</th><th>數量</th><th>小計</th></tr></thead>
+        <tbody id="cashRows"></tbody>
+        <tbody>
+          <tr><td>點收合計</td><td></td><td id="cashCounted">0</td></tr>
+          <tr>
+            <td>扣除零用金（開店找零）</td>
+            <td colspan="2"><input class="num" id="cashFloat" inputmode="numeric" type="number" placeholder="0"></td>
+          </tr>
+          <tr class="total-row"><td>實收現金</td><td></td><td id="cashNet">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>3. 刷卡 <small>依刷卡機結帳單輸入</small></h2>
+      <table>
+        <thead><tr><th>刷卡機／卡別</th><th>金額</th><th></th></tr></thead>
+        <tbody id="cardRows"></tbody>
+        <tbody>
+          <tr class="total-row"><td>刷卡合計</td><td id="cardTotal">0</td><td></td></tr>
+        </tbody>
+      </table>
+      <div class="row-actions"><button type="button" class="small" id="addCard">＋ 新增一台刷卡機</button></div>
+    </div>
+
+    <div class="card">
+      <h2>4. 禮券 <small>依面額輸入張數</small></h2>
+      <table>
+        <thead><tr><th>面額</th><th>張數</th><th>小計</th><th></th></tr></thead>
+        <tbody id="voucherRows"></tbody>
+        <tbody>
+          <tr class="total-row"><td>禮券合計</td><td id="voucherCount">0 張</td><td id="voucherTotal">0</td><td></td></tr>
+        </tbody>
+      </table>
+      <div class="row-actions"><button type="button" class="small" id="addVoucher">＋ 新增面額</button></div>
+      <label style="margin-top:12px">禮券序號（選填，每行一個或用空白隔開，可檢查重複使用）
+        <textarea id="serials" placeholder="例：A000123&#10;A000124"></textarea>
+      </label>
+      <div id="serialCheck" class="msg hidden"></div>
+    </div>
+
+    <div class="card">
+      <h2>5. 比對結果</h2>
+      <table>
+        <thead><tr><th>項目</th><th>POS</th><th>實收</th><th>差額</th></tr></thead>
+        <tbody id="compareRows"></tbody>
+      </table>
+      <div id="overall" class="msg"></div>
+
+      <label style="margin-top:12px" id="reasonLabel">差異原因
+        <textarea id="reason" placeholder="有差額時必填，例：找錯錢、退貨未在 POS 登錄"></textarea>
+      </label>
+      <div class="grid" style="margin-top:10px">
+        <label>確認主管<input type="text" id="supervisor" placeholder="姓名"></label>
+      </div>
+      <div id="saveMsg" class="msg hidden"></div>
+      <div class="row-actions">
+        <button type="button" class="primary" id="save">確認存檔</button>
+        <button type="button" id="print">列印</button>
+        <button type="button" id="reset">清空，開始新的一天</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 歷史紀錄 ===== -->
+  <section id="view-history" class="hidden">
+    <div class="card">
+      <h2>歷史紀錄</h2>
+      <div class="grid no-print">
+        <label>月份<input type="month" id="monthFilter"></label>
+      </div>
+      <div class="table-wrap" style="margin-top:10px">
+        <table>
+          <thead><tr><th>日期</th><th>收銀台</th><th>POS 總額</th><th>實收總額</th><th>差額</th><th></th></tr></thead>
+          <tbody id="historyRows"></tbody>
+          <tbody id="historyTotal"></tbody>
+        </table>
+      </div>
+      <p id="historyEmpty" class="muted hidden">這個月份還沒有紀錄。</p>
+      <div class="row-actions">
+        <button type="button" id="exportCsv">匯出 Excel（CSV）</button>
+        <button type="button" id="exportJson">備份資料</button>
+        <button type="button" id="importJson">還原備份</button>
+        <input type="file" id="importFile" accept="application/json,.json" class="hidden">
+      </div>
+      <p class="muted">資料只存在這台裝置的瀏覽器裡。清除瀏覽器資料會一併刪除，請定期按「備份資料」另存檔案。</p>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var STORAGE_KEY = 'daily-recon.records.v1';
+  var DENOMS = [2000, 1000, 500, 200, 100, 50, 10, 5, 1];
+  var editingId = null;
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function toInt(v) {
+    var n = Math.round(Number(v));
+    return isFinite(n) ? n : 0;
+  }
+  function fmt(n) { return toInt(n).toLocaleString('zh-TW'); }
+  function fmtDiff(n) { return (n > 0 ? '+' : '') + fmt(n); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function today() {
+    var d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 10);
+  }
+  function showMsg(el, type, html) {
+    el.className = 'msg ' + type;
+    el.innerHTML = html;
+  }
+  function hideMsg(el) { el.className = 'msg hidden'; }
+
+  // ---------- storage ----------
+  function loadRecords() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) { return []; }
+  }
+  function saveRecords(list) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+      return true;
+    } catch (e) { return false; }
+  }
+
+  // ---------- dynamic rows ----------
+  function buildCashRows() {
+    $('cashRows').innerHTML = DENOMS.map(function (d) {
+      return '<tr><td>' + fmt(d) + (d >= 100 ? ' 元鈔' : ' 元硬幣') + '</td>' +
+        '<td><input class="num cash-count" data-denom="' + d + '" inputmode="numeric" type="number" min="0" placeholder="0"></td>' +
+        '<td class="cash-sub">0</td></tr>';
+    }).join('');
+  }
+
+  function addCardRow(name, amount) {
+    var tr = document.createElement('tr');
+    var n = $('cardRows').children.length + 1;
+    tr.innerHTML =
+      '<td><input type="text" class="card-name" placeholder="刷卡機 ' + n + '"></td>' +
+      '<td><input class="num card-amount" inputmode="numeric" type="number" placeholder="0"></td>' +
+      '<td><button type="button" class="small danger remove">刪除</button></td>';
+    tr.querySelector('.card-name').value = name || '';
+    tr.querySelector('.card-amount').value = amount == null ? '' : amount;
+    $('cardRows').appendChild(tr);
+  }
+
+  function addVoucherRow(face, count) {
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td><input class="num v-face" inputmode="numeric" type="number" min="0" placeholder="面額"></td>' +
+      '<td><input class="num v-count" inputmode="numeric" type="number" min="0" placeholder="0"></td>' +
+      '<td class="v-sub">0</td>' +
+      '<td><button type="button" class="small danger remove">刪除</button></td>';
+    tr.querySelector('.v-face').value = face == null ? '' : face;
+    tr.querySelector('.v-count').value = count == null ? '' : count;
+    $('voucherRows').appendChild(tr);
+  }
+
+  // ---------- read form ----------
+  function parseSerials(text) {
+    return text.split(/[\s,，、]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
+  function readForm() {
+    var cashCounts = {};
+    var cashCounted = 0;
+    document.querySelectorAll('.cash-count').forEach(function (inp) {
+      var d = toInt(inp.dataset.denom);
+      var c = toInt(inp.value);
+      if (c) cashCounts[d] = c;
+      cashCounted += d * c;
+    });
+    var cashFloat = toInt($('cashFloat').value);
+
+    var cards = [];
+    document.querySelectorAll('#cardRows tr').forEach(function (tr, i) {
+      var name = tr.querySelector('.card-name').value.trim();
+      var amount = toInt(tr.querySelector('.card-amount').value);
+      cards.push({ name: name || ('刷卡機 ' + (i + 1)), amount: amount });
+    });
+
+    var vouchers = [];
+    document.querySelectorAll('#voucherRows tr').forEach(function (tr) {
+      vouchers.push({
+        face: toInt(tr.querySelector('.v-face').value),
+        count: toInt(tr.querySelector('.v-count').value)
+      });
+    });
+
+    var pos = {
+      cash: toInt($('posCash').value),
+      card: toInt($('posCard').value),
+      voucher: toInt($('posVoucher').value),
+      total: toInt($('posTotal').value)
+    };
+    var actual = {
+      cash: cashCounted - cashFloat,
+      card: cards.reduce(function (s, c) { return s + c.amount; }, 0),
+      voucher: vouchers.reduce(function (s, v) { return s + v.face * v.count; }, 0)
+    };
+    actual.total = actual.cash + actual.card + actual.voucher;
+
+    return {
+      date: $('date').value,
+      station: $('station').value.trim(),
+      cashier: $('cashier').value.trim(),
+      pos: pos,
+      cashCounts: cashCounts,
+      cashFloat: cashFloat,
+      cards: cards,
+      vouchers: vouchers,
+      serials: parseSerials($('serials').value),
+      actual: actual,
+      diff: {
+        cash: actual.cash - pos.cash,
+        card: actual.card - pos.card,
+        voucher: actual.voucher - pos.voucher,
+        total: actual.total - pos.total
+      },
+      reason: $('reason').value.trim(),
+      supervisor: $('supervisor').value.trim()
+    };
+  }
+
+  function hasDiff(r) {
+    return r.diff.cash !== 0 || r.diff.card !== 0 || r.diff.voucher !== 0 || r.diff.total !== 0;
+  }
+
+  // ---------- recompute ----------
+  function recompute() {
+    var r = readForm();
+
+    // 現金小計
+    document.querySelectorAll('#cashRows tr').forEach(function (tr) {
+      var inp = tr.querySelector('.cash-count');
+      tr.querySelector('.cash-sub').textContent = fmt(toInt(inp.dataset.denom) * toInt(inp.value));
+    });
+    $('cashCounted').textContent = fmt(r.actual.cash + r.cashFloat);
+    $('cashNet').textContent = fmt(r.actual.cash);
+
+    // 刷卡、禮券
+    $('cardTotal').textContent = fmt(r.actual.card);
+    document.querySelectorAll('#voucherRows tr').forEach(function (tr) {
+      tr.querySelector('.v-sub').textContent =
+        fmt(toInt(tr.querySelector('.v-face').value) * toInt(tr.querySelector('.v-count').value));
+    });
+    var vCount = r.vouchers.reduce(function (s, v) { return s + v.count; }, 0);
+    $('voucherCount').textContent = fmt(vCount) + ' 張';
+    $('voucherTotal').textContent = fmt(r.actual.voucher);
+
+    // POS 對帳單自我驗算
+    var posFilled = ['posCash', 'posCard', 'posVoucher', 'posTotal'].some(function (id) { return $(id).value !== ''; });
+    var posSum = r.pos.cash + r.pos.card + r.pos.voucher;
+    if (!posFilled) {
+      hideMsg($('posCheck'));
+    } else if (posSum === r.pos.total) {
+      showMsg($('posCheck'), 'ok', '✓ 現金＋刷卡＋禮券 ＝ 總額，對帳單數字輸入正確');
+    } else {
+      showMsg($('posCheck'), 'warn', '⚠ 現金＋刷卡＋禮券 ＝ ' + fmt(posSum) + '，與總額 ' + fmt(r.pos.total) +
+        ' 相差 ' + fmtDiff(r.pos.total - posSum) + '。請檢查是否打錯，或對帳單上還有其他付款方式。');
+    }
+
+    // 禮券序號檢查
+    checkSerials(r, vCount);
+
+    // 比對表
+    var items = [['現金', 'cash'], ['刷卡', 'card'], ['禮券', 'voucher'], ['總額', 'total']];
+    $('compareRows').innerHTML = items.map(function (it) {
+      var k = it[1], d = r.diff[k];
+      return '<tr' + (k === 'total' ? ' class="total-row"' : '') + '><td>' + it[0] + '</td>' +
+        '<td>' + fmt(r.pos[k]) + '</td><td>' + fmt(r.actual[k]) + '</td>' +
+        '<td class="' + (d === 0 ? 'diff-ok' : 'diff-bad') + '">' + (d === 0 ? '✓ 0' : fmtDiff(d)) + '</td></tr>';
+    }).join('');
+
+    if (hasDiff(r)) {
+      var parts = [];
+      if (r.diff.total > 0) parts.push('實收比 POS 多 ' + fmt(r.diff.total) + ' 元');
+      if (r.diff.total < 0) parts.push('實收比 POS 少 ' + fmt(-r.diff.total) + ' 元');
+      showMsg($('overall'), 'bad', '✗ 金額不一致' + (parts.length ? '：' + parts.join('') : '（總額相符，但付款方式分配不同）') +
+        '。請重新點收，或在下方填寫差異原因。');
+    } else {
+      showMsg($('overall'), 'ok', '✓ 全部一致，可以存檔');
+    }
+  }
+
+  function checkSerials(r, vCount) {
+    var el = $('serialCheck');
+    if (!r.serials.length) { hideMsg(el); return; }
+
+    var seen = {}, dupToday = [];
+    r.serials.forEach(function (s) {
+      if (seen[s] && dupToday.indexOf(s) < 0) dupToday.push(s);
+      seen[s] = true;
+    });
+
+    var dupHistory = [];
+    loadRecords().forEach(function (rec) {
+      if (rec.id === editingId) return;
+      (rec.serials || []).forEach(function (s) {
+        if (seen[s]) dupHistory.push(s + '（' + rec.date + ' ' + (rec.station || '') + '）');
+      });
+    });
+
+    var lines = [];
+    if (dupToday.length) lines.push('今天重複輸入：' + esc(dupToday.join('、')));
+    if (dupHistory.length) lines.push('以前已經收過：' + esc(dupHistory.join('、')));
+    if (vCount && r.serials.length !== vCount) {
+      lines.push('序號共 ' + r.serials.length + ' 個，但禮券張數是 ' + vCount + ' 張');
+    }
+
+    if (dupToday.length || dupHistory.length) {
+      showMsg(el, 'bad', '✗ ' + lines.join('<br>'));
+    } else if (lines.length) {
+      showMsg(el, 'warn', '⚠ ' + lines.join('<br>'));
+    } else {
+      showMsg(el, 'ok', '✓ 序號 ' + r.serials.length + ' 個，沒有重複');
+    }
+  }
+
+  // ---------- save / load ----------
+  function save() {
+    var r = readForm();
+    var problems = [];
+    if (!r.date) problems.push('請填寫日期');
+    if (hasDiff(r) && !r.reason) problems.push('有差額時必須填寫差異原因');
+    if (!r.supervisor) problems.push('請填寫確認主管');
+    if (problems.length) {
+      showMsg($('saveMsg'), 'bad', problems.join('<br>'));
+      return;
+    }
+
+    var list = loadRecords();
+    if (!editingId) {
+      var dup = list.find(function (x) { return x.date === r.date && x.station === r.station; });
+      if (dup && !confirm(r.date + ' ' + (r.station || '') + ' 已經有一筆紀錄，確定要再新增一筆嗎？')) return;
+    }
+
+    r.id = editingId || (Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+    r.savedAt = new Date().toISOString();
+    var idx = list.findIndex(function (x) { return x.id === r.id; });
+    if (idx >= 0) list[idx] = r; else list.push(r);
+
+    if (!saveRecords(list)) {
+      showMsg($('saveMsg'), 'bad', '存檔失敗：這個瀏覽器不允許儲存資料（可能是無痕模式）。請改用一般模式開啟。');
+      return;
+    }
+    editingId = r.id;
+    updateBanner();
+    showMsg($('saveMsg'), 'ok', '✓ 已存檔（' + new Date().toLocaleTimeString('zh-TW') + '）');
+  }
+
+  function fillForm(r) {
+    $('date').value = r.date || today();
+    $('station').value = r.station || '';
+    $('cashier').value = r.cashier || '';
+    $('posCash').value = r.pos && r.pos.cash != null ? r.pos.cash : '';
+    $('posCard').value = r.pos && r.pos.card != null ? r.pos.card : '';
+    $('posVoucher').value = r.pos && r.pos.voucher != null ? r.pos.voucher : '';
+    $('posTotal').value = r.pos && r.pos.total != null ? r.pos.total : '';
+    document.querySelectorAll('.cash-count').forEach(function (inp) {
+      var c = r.cashCounts && r.cashCounts[inp.dataset.denom];
+      inp.value = c ? c : '';
+    });
+    $('cashFloat').value = r.cashFloat ? r.cashFloat : '';
+
+    $('cardRows').innerHTML = '';
+    (r.cards && r.cards.length ? r.cards : [{}]).forEach(function (c) { addCardRow(c.name, c.amount); });
+    $('voucherRows').innerHTML = '';
+    (r.vouchers && r.vouchers.length ? r.vouchers : [{}]).forEach(function (v) { addVoucherRow(v.face, v.count); });
+
+    $('serials').value = (r.serials || []).join('\n');
+    $('reason').value = r.reason || '';
+    $('supervisor').value = r.supervisor || '';
+    hideMsg($('saveMsg'));
+    recompute();
+  }
+
+  function resetForm() {
+    editingId = null;
+    var keep = { station: $('station').value, cashFloat: toInt($('cashFloat').value) };
+    fillForm({ station: keep.station, cashFloat: keep.cashFloat });
+    updateBanner();
+  }
+
+  function updateBanner() {
+    var el = $('editing-banner');
+    if (editingId) {
+      el.classList.remove('hidden');
+      el.textContent = '正在編輯已存檔的紀錄。修改後按「確認存檔」會覆蓋原本的資料。';
+    } else {
+      el.classList.add('hidden');
+    }
+  }
+
+  // ---------- history ----------
+  function renderHistory() {
+    var month = $('monthFilter').value;
+    var list = loadRecords()
+      .filter(function (r) { return !month || (r.date || '').slice(0, 7) === month; })
+      .sort(function (a, b) { return (b.date + b.station).localeCompare(a.date + a.station); });
+
+    $('historyEmpty').classList.toggle('hidden', list.length > 0);
+    $('historyRows').innerHTML = list.map(function (r) {
+      var d = r.diff.total, bad = hasDiff(r);
+      return '<tr><td>' + esc(r.date) + '</td><td>' + esc(r.station) + '</td>' +
+        '<td>' + fmt(r.pos.total) + '</td><td>' + fmt(r.actual.total) + '</td>' +
+        '<td><span class="badge ' + (bad ? 'bad' : 'ok') + '">' + (bad ? fmtDiff(d) : '✓ 一致') + '</span></td>' +
+        '<td style="white-space:nowrap"><button type="button" class="small" data-open="' + esc(r.id) + '">開啟</button> ' +
+        '<button type="button" class="small danger" data-del="' + esc(r.id) + '">刪除</button></td></tr>';
+    }).join('');
+
+    if (list.length) {
+      var posSum = 0, actSum = 0;
+      list.forEach(function (r) { posSum += r.pos.total; actSum += r.actual.total; });
+      $('historyTotal').innerHTML = '<tr class="total-row"><td>合計</td><td>' + list.length + ' 筆</td>' +
+        '<td>' + fmt(posSum) + '</td><td>' + fmt(actSum) + '</td><td>' + fmtDiff(actSum - posSum) + '</td><td></td></tr>';
+    } else {
+      $('historyTotal').innerHTML = '';
+    }
+  }
+
+  function download(filename, content, type) {
+    var blob = new Blob([content], { type: type });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+  }
+
+  function exportCsv() {
+    var month = $('monthFilter').value;
+    var list = loadRecords()
+      .filter(function (r) { return !month || (r.date || '').slice(0, 7) === month; })
+      .sort(function (a, b) { return (a.date + a.station).localeCompare(b.date + b.station); });
+    var header = ['日期', '收銀台', '點收人',
+      'POS現金', 'POS刷卡', 'POS禮券', 'POS總額',
+      '實收現金', '實收刷卡', '實收禮券', '實收總額',
+      '現金差額', '刷卡差額', '禮券差額', '總額差額',
+      '零用金', '禮券序號', '差異原因', '確認主管', '存檔時間'];
+    var rows = list.map(function (r) {
+      return [r.date, r.station, r.cashier,
+        r.pos.cash, r.pos.card, r.pos.voucher, r.pos.total,
+        r.actual.cash, r.actual.card, r.actual.voucher, r.actual.total,
+        r.diff.cash, r.diff.card, r.diff.voucher, r.diff.total,
+        r.cashFloat, (r.serials || []).join(' '), r.reason, r.supervisor,
+        r.savedAt ? new Date(r.savedAt).toLocaleString('zh-TW') : ''];
+    });
+    var csv = [header].concat(rows).map(function (row) {
+      return row.map(function (v) {
+        var s = String(v == null ? '' : v);
+        return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      }).join(',');
+    }).join('\r\n');
+    // 加上 BOM，Excel 開啟中文才不會亂碼
+    download('對帳紀錄_' + (month || '全部') + '.csv', '﻿' + csv, 'text/csv;charset=utf-8');
+  }
+
+  function exportJson() {
+    download('對帳備份_' + today() + '.json', JSON.stringify(loadRecords(), null, 2), 'application/json');
+  }
+
+  function importJson(file) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var incoming = JSON.parse(reader.result);
+        if (!Array.isArray(incoming)) throw new Error('格式不正確');
+        var list = loadRecords();
+        var byId = {};
+        list.forEach(function (r) { byId[r.id] = r; });
+        var added = 0;
+        incoming.forEach(function (r) {
+          if (r && r.id && r.pos && r.actual && r.diff) {
+            if (!byId[r.id]) added++;
+            byId[r.id] = r;
+          }
+        });
+        saveRecords(Object.keys(byId).map(function (k) { return byId[k]; }));
+        alert('還原完成，新增 ' + added + ' 筆紀錄。');
+        renderHistory();
+      } catch (e) {
+        alert('無法讀取備份檔：' + e.message);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  // ---------- events ----------
+  function switchView(view) {
+    document.querySelectorAll('nav button').forEach(function (b) {
+      b.classList.toggle('active', b.dataset.view === view);
+    });
+    $('view-entry').classList.toggle('hidden', view !== 'entry');
+    $('view-history').classList.toggle('hidden', view !== 'history');
+    if (view === 'history') renderHistory();
+    window.scrollTo(0, 0);
+  }
+
+  document.querySelectorAll('nav button').forEach(function (b) {
+    b.addEventListener('click', function () { switchView(b.dataset.view); });
+  });
+
+  $('view-entry').addEventListener('input', function () {
+    hideMsg($('saveMsg'));
+    recompute();
+  });
+  $('view-entry').addEventListener('click', function (e) {
+    if (e.target.classList.contains('remove')) {
+      e.target.closest('tr').remove();
+      recompute();
+    }
+  });
+  $('addCard').addEventListener('click', function () { addCardRow(); });
+  $('addVoucher').addEventListener('click', function () { addVoucherRow(); });
+  $('save').addEventListener('click', save);
+  $('print').addEventListener('click', function () { window.print(); });
+  $('reset').addEventListener('click', function () {
+    if (confirm('確定要清空目前的輸入嗎？（已存檔的紀錄不會被刪除）')) resetForm();
+  });
+
+  $('monthFilter').addEventListener('change', renderHistory);
+  $('historyRows').addEventListener('click', function (e) {
+    var openId = e.target.dataset.open, delId = e.target.dataset.del;
+    if (openId) {
+      var rec = loadRecords().find(function (r) { return r.id === openId; });
+      if (rec) {
+        editingId = rec.id;
+        fillForm(rec);
+        updateBanner();
+        switchView('entry');
+      }
+    } else if (delId && confirm('確定要刪除這筆紀錄嗎？刪除後無法復原。')) {
+      saveRecords(loadRecords().filter(function (r) { return r.id !== delId; }));
+      if (editingId === delId) { editingId = null; updateBanner(); }
+      renderHistory();
+    }
+  });
+  $('exportCsv').addEventListener('click', exportCsv);
+  $('exportJson').addEventListener('click', exportJson);
+  $('importJson').addEventListener('click', function () { $('importFile').click(); });
+  $('importFile').addEventListener('change', function () {
+    if (this.files[0]) importJson(this.files[0]);
+    this.value = '';
+  });
+
+  // ---------- init ----------
+  buildCashRows();
+  fillForm({});
+  $('monthFilter').value = today().slice(0, 7);
+})();
+</script>
+</body>
+</html>
