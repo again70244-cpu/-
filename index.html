@@ -1,9 +1,7 @@
-<!doctype html>
-<html lang="zh-Hant">
-<head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>每日對帳</title>
+<meta name="claude:viewport-fit-sides" content="cover">
 <style>
   :root {
     --bg: #f4f5f7;
@@ -20,7 +18,7 @@
     --warn-bg: #fff8c5;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #0d1117;
       --card: #161b22;
       --text: #e6edf3;
@@ -33,7 +31,23 @@
       --bad-bg: #2d1214;
       --warn: #d29922;
       --warn-bg: #272115;
+      color-scheme: dark;
     }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117;
+    --card: #161b22;
+    --text: #e6edf3;
+    --muted: #8d96a0;
+    --border: #30363d;
+    --accent: #4493f8;
+    --ok: #3fb950;
+    --ok-bg: #12261e;
+    --bad: #f85149;
+    --bad-bg: #2d1214;
+    --warn: #d29922;
+    --warn-bg: #272115;
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
   body {
@@ -44,18 +58,29 @@
     font-size: 16px;
     line-height: 1.5;
   }
+  body::before {
+    content: ""; position: fixed; inset: 0 0 auto; z-index: 10;
+    height: env(safe-area-inset-top, 0px); background: var(--card);
+  }
   header {
-    position: sticky; top: 0; z-index: 10;
+    position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10;
     background: var(--card);
     border-bottom: 1px solid var(--border);
-    padding: 10px 16px;
+    padding-block: 10px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
   }
   header h1 { margin: 0; font-size: 18px; }
   nav { display: flex; gap: 4px; }
   nav button { border: 1px solid var(--border); background: var(--bg); color: var(--text); }
   nav button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  main {
+    max-width: 760px; margin: 0 auto;
+    padding-block: 16px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
   .card {
     background: var(--card);
     border: 1px solid var(--border);
@@ -107,14 +132,26 @@
   .badge.ok { background: var(--ok-bg); color: var(--ok); }
   .badge.bad { background: var(--bad-bg); color: var(--bad); }
   .table-wrap { overflow-x: auto; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .dialog-backdrop {
+    position: fixed; inset: 0; z-index: 20;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px;
+  }
+  .dialog {
+    background: var(--card); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; max-width: 360px; width: 100%;
+  }
+  .dialog p { margin: 0 0 14px; }
+  .dialog .row-actions { justify-content: flex-end; }
   @media print {
     header nav, .row-actions, .no-print, button { display: none !important; }
     body { background: #fff; color: #000; }
     .card { border-color: #999; break-inside: avoid; }
   }
 </style>
-</head>
-<body>
 <header>
   <h1>每日對帳</h1>
   <nav>
@@ -232,14 +269,25 @@
       <p id="historyEmpty" class="muted hidden">這個月份還沒有紀錄。</p>
       <div class="row-actions">
         <button type="button" id="exportCsv">匯出 Excel（CSV）</button>
-        <button type="button" id="exportJson">備份資料</button>
-        <button type="button" id="importJson">還原備份</button>
+        <button type="button" id="exportJson" class="local-only">備份資料</button>
+        <button type="button" id="importJson" class="local-only">還原備份</button>
         <input type="file" id="importFile" accept="application/json,.json" class="hidden">
       </div>
-      <p class="muted">資料只存在這台裝置的瀏覽器裡。清除瀏覽器資料會一併刪除，請定期按「備份資料」另存檔案。</p>
+      <div id="historyMsg" class="msg hidden"></div>
+      <p class="muted" id="storageNote">正在連線資料庫…</p>
     </div>
   </section>
 </main>
+
+<div id="dialog" class="dialog-backdrop hidden" role="dialog" aria-modal="true">
+  <div class="dialog">
+    <p id="dialogText"></p>
+    <div class="row-actions">
+      <button type="button" id="dialogCancel">取消</button>
+      <button type="button" class="primary" id="dialogOk">確定</button>
+    </div>
+  </div>
+</div>
 
 <script>
 (function () {
@@ -248,6 +296,9 @@
   var STORAGE_KEY = 'daily-recon.records.v1';
   var DENOMS = [2000, 1000, 500, 200, 100, 50, 10, 5, 1];
   var editingId = null;
+  var records = [];   // 目前所有紀錄（記憶體中的副本）
+  var db = null;      // 發佈成 Artifact 時使用共享資料庫
+  var downloads = null;
 
   var $ = function (id) { return document.getElementById(id); };
 
@@ -274,17 +325,83 @@
   function hideMsg(el) { el.className = 'msg hidden'; }
 
   // ---------- storage ----------
-  function loadRecords() {
+  // 發佈成 Artifact 時存在共享資料庫（每台裝置都看得到）；
+  // 直接用瀏覽器開啟檔案時存在這台裝置的瀏覽器裡。
+  function loadRecords() { return records.slice(); }
+
+  function writeLocal() {
     try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch (e) { return []; }
-  }
-  function saveRecords(list) {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
       return true;
     } catch (e) { return false; }
+  }
+
+  function putRecord(r) {
+    if (db) return db.collection('records').doc(r.id).set(r);
+    var idx = records.findIndex(function (x) { return x.id === r.id; });
+    if (idx >= 0) records[idx] = r; else records.push(r);
+    return writeLocal() ? Promise.resolve() : Promise.reject({ code: 'local_storage' });
+  }
+
+  function removeRecord(id) {
+    if (db) return db.collection('records').doc(id).delete();
+    records = records.filter(function (r) { return r.id !== id; });
+    writeLocal();
+    return Promise.resolve();
+  }
+
+  function onRecordsChanged() {
+    if (!$('view-history').classList.contains('hidden')) renderHistory();
+    recompute();
+  }
+
+  function useLocal() {
+    db = null;
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      records = raw ? JSON.parse(raw) : [];
+    } catch (e) { records = []; }
+    $('storageNote').textContent = '資料只存在這台裝置的瀏覽器裡。清除瀏覽器資料會一併刪除，請定期按「備份資料」另存檔案。';
+    onRecordsChanged();
+  }
+
+  function useDb(ns) {
+    db = ns;
+    document.querySelectorAll('.local-only').forEach(function (el) { el.classList.add('hidden'); });
+    $('storageNote').textContent = '資料存在雲端，用同一個連結在任何裝置開啟都會看到相同的紀錄。';
+    db.collection('records').onSnapshot(function (snap) {
+      records = snap.docs.map(function (d) { return d.data(); });
+      onRecordsChanged();
+    }, function () {
+      $('storageNote').textContent = '資料庫連線中斷，請重新整理頁面。';
+    });
+  }
+
+  function initStorage() {
+    var c = window.claude;
+    if (!c || typeof c.use !== 'function') { useLocal(); return; }
+    // 在 Artifact 檢視器裡：列印按鈕無作用，改用平台提供的資料庫與下載
+    $('print').classList.add('hidden');
+    c.use('downloads').then(function (ns) { downloads = ns; }, function () {});
+    c.use('db').then(function (ns) {
+      if (ns) useDb(ns); else useLocal();
+    }, useLocal);
+  }
+
+  // ---------- in-page confirm (artifact viewer blocks window.confirm) ----------
+  function askConfirm(text) {
+    return new Promise(function (resolve) {
+      $('dialogText').textContent = text;
+      $('dialog').classList.remove('hidden');
+      $('dialogOk').focus();
+      function done(v) {
+        $('dialog').classList.add('hidden');
+        $('dialogOk').onclick = $('dialogCancel').onclick = null;
+        resolve(v);
+      }
+      $('dialogOk').onclick = function () { done(true); };
+      $('dialogCancel').onclick = function () { done(false); };
+    });
   }
 
   // ---------- dynamic rows ----------
@@ -493,24 +610,27 @@
       return;
     }
 
-    var list = loadRecords();
-    if (!editingId) {
-      var dup = list.find(function (x) { return x.date === r.date && x.station === r.station; });
-      if (dup && !confirm(r.date + ' ' + (r.station || '') + ' 已經有一筆紀錄，確定要再新增一筆嗎？')) return;
-    }
+    var dup = !editingId && records.find(function (x) { return x.date === r.date && x.station === r.station; });
+    var go = dup
+      ? askConfirm(r.date + ' ' + (r.station || '') + ' 已經有一筆紀錄，確定要再新增一筆嗎？')
+      : Promise.resolve(true);
 
-    r.id = editingId || (Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
-    r.savedAt = new Date().toISOString();
-    var idx = list.findIndex(function (x) { return x.id === r.id; });
-    if (idx >= 0) list[idx] = r; else list.push(r);
-
-    if (!saveRecords(list)) {
-      showMsg($('saveMsg'), 'bad', '存檔失敗：這個瀏覽器不允許儲存資料（可能是無痕模式）。請改用一般模式開啟。');
-      return;
-    }
-    editingId = r.id;
-    updateBanner();
-    showMsg($('saveMsg'), 'ok', '✓ 已存檔（' + new Date().toLocaleTimeString('zh-TW') + '）');
+    go.then(function (ok) {
+      if (!ok) return;
+      r.id = editingId || (Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+      r.savedAt = new Date().toISOString();
+      $('save').disabled = true;
+      return putRecord(r).then(function () {
+        editingId = r.id;
+        updateBanner();
+        showMsg($('saveMsg'), 'ok', '✓ 已存檔（' + new Date().toLocaleTimeString('zh-TW') + '）');
+      }, function (e) {
+        var why = !db ? '這個瀏覽器不允許儲存資料（可能是無痕模式），請改用一般模式開啟。'
+          : e && e.code === 'invalid_argument' ? '你沒有這個頁面的編輯權限，請擁有者把你設為「參與者」以上。'
+          : '連線失敗，請稍後再按一次「確認存檔」。';
+        showMsg($('saveMsg'), 'bad', '存檔失敗：' + why);
+      });
+    }).then(function () { $('save').disabled = false; });
   }
 
   function fillForm(r) {
@@ -584,6 +704,12 @@
   }
 
   function download(filename, content, type) {
+    if (downloads) {
+      downloads.save({ filename: filename, data: content }).then(function () {}, function (e) {
+        if (e && e.code !== 'declined') showMsg($('historyMsg'), 'bad', '無法下載檔案，請稍後再試。');
+      });
+      return;
+    }
     var blob = new Blob([content], { type: type });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -631,9 +757,8 @@
       try {
         var incoming = JSON.parse(reader.result);
         if (!Array.isArray(incoming)) throw new Error('格式不正確');
-        var list = loadRecords();
         var byId = {};
-        list.forEach(function (r) { byId[r.id] = r; });
+        records.forEach(function (r) { byId[r.id] = r; });
         var added = 0;
         incoming.forEach(function (r) {
           if (r && r.id && r.pos && r.actual && r.diff) {
@@ -641,11 +766,12 @@
             byId[r.id] = r;
           }
         });
-        saveRecords(Object.keys(byId).map(function (k) { return byId[k]; }));
-        alert('還原完成，新增 ' + added + ' 筆紀錄。');
+        records = Object.keys(byId).map(function (k) { return byId[k]; });
+        writeLocal();
+        showMsg($('historyMsg'), 'ok', '還原完成，新增 ' + added + ' 筆紀錄。');
         renderHistory();
       } catch (e) {
-        alert('無法讀取備份檔：' + e.message);
+        showMsg($('historyMsg'), 'bad', '無法讀取備份檔：' + e.message);
       }
     };
     reader.readAsText(file);
@@ -681,7 +807,7 @@
   $('save').addEventListener('click', save);
   $('print').addEventListener('click', function () { window.print(); });
   $('reset').addEventListener('click', function () {
-    if (confirm('確定要清空目前的輸入嗎？（已存檔的紀錄不會被刪除）')) resetForm();
+    askConfirm('確定要清空目前的輸入嗎？（已存檔的紀錄不會被刪除）').then(function (ok) { if (ok) resetForm(); });
   });
 
   $('monthFilter').addEventListener('change', renderHistory);
@@ -695,10 +821,16 @@
         updateBanner();
         switchView('entry');
       }
-    } else if (delId && confirm('確定要刪除這筆紀錄嗎？刪除後無法復原。')) {
-      saveRecords(loadRecords().filter(function (r) { return r.id !== delId; }));
-      if (editingId === delId) { editingId = null; updateBanner(); }
-      renderHistory();
+    } else if (delId) {
+      askConfirm('確定要刪除這筆紀錄嗎？刪除後無法復原。').then(function (ok) {
+        if (!ok) return;
+        removeRecord(delId).then(function () {
+          if (editingId === delId) { editingId = null; updateBanner(); }
+          renderHistory();
+        }, function () {
+          showMsg($('historyMsg'), 'bad', '刪除失敗，請稍後再試。');
+        });
+      });
     }
   });
   $('exportCsv').addEventListener('click', exportCsv);
@@ -713,7 +845,6 @@
   buildCashRows();
   fillForm({});
   $('monthFilter').value = today().slice(0, 7);
+  initStorage();
 })();
 </script>
-</body>
-</html>
