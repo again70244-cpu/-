@@ -133,6 +133,14 @@
   .badge.bad { background: var(--bad-bg); color: var(--bad); }
   .table-wrap { overflow-x: auto; }
   button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .scan { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
+  .scan-btn {
+    display: inline-block; cursor: pointer;
+    background: var(--accent); color: #fff; font-weight: 600; font-size: 15px;
+    border-radius: 6px; padding: 10px 16px;
+  }
+  .scan.busy .scan-btn { opacity: 0.5; pointer-events: none; }
+  input.scanned { outline: 2px solid var(--warn); background: var(--warn-bg); }
   .dialog-backdrop {
     position: fixed; inset: 0; z-index: 20;
     background: rgba(0, 0, 0, 0.45);
@@ -176,6 +184,12 @@
 
     <div class="card">
       <h2>1. POS 對帳單 <small>照列印的日結單輸入</small></h2>
+      <div id="scanBox" class="scan hidden">
+        <label class="scan-btn" for="scanFile">拍照辨識對帳單</label>
+        <input type="file" id="scanFile" accept="image/*" capture="environment" class="hidden">
+        <span class="muted">拍照或選擇照片，自動填入下面的金額</span>
+      </div>
+      <div id="scanMsg" class="msg hidden" style="margin:0 0 12px"></div>
       <div class="grid">
         <label>現金<input class="num" id="posCash" inputmode="numeric" type="number"></label>
         <label>刷卡<input class="num" id="posCard" inputmode="numeric" type="number"></label>
@@ -299,6 +313,21 @@
   var records = [];   // 目前所有紀錄（記憶體中的副本）
   var db = null;      // 發佈成 Artifact 時使用共享資料庫
   var downloads = null;
+  var sample = null;  // 用 Claude 辨識對帳單照片
+
+  var SCAN_PROMPT = [
+    '這張照片是台灣零售 POS 機列印的「每日日結對帳單」（熱感紙收據）。',
+    '請讀出當日的以下金額（新台幣，整數，不要逗號或貨幣符號）：',
+    '- cash：現金',
+    '- card：信用卡／刷卡',
+    '- voucher：禮券（可能寫作禮券、商品券、提貨券）',
+    '- total：當日營業總額（可能寫作總計、合計、營業額、總額）',
+    '若對帳單上有日期，讀成 date（格式 YYYY-MM-DD；民國年請換算成西元年）。',
+    '若有其他付款方式或退貨、折讓、作廢等金額，列在 others。',
+    '看不到或無法確定的欄位填 null，不要猜。',
+    '只回傳一個 JSON 物件，格式如下：',
+    '{"date":"2026-10-21","cash":12000,"card":8000,"voucher":1500,"total":21500,"others":[{"label":"退貨","amount":-300}],"note":"看不清楚或不確定的地方，沒有就空字串"}'
+  ].join('\n');
 
   var $ = function (id) { return document.getElementById(id); };
 
@@ -377,9 +406,78 @@
     });
   }
 
+  // ---------- 拍照辨識 ----------
+  function initScan(c) {
+    c.use('sample').then(function (ns) {
+      if (!ns) return;
+      ns.limits().then(function (l) {
+        if (!l || !l.images) return;
+        sample = ns;
+        $('scanFile').accept = l.images.mediaTypes.join(',');
+        $('scanBox').classList.remove('hidden');
+      }, function () {});
+    }, function () {});
+  }
+
+  var SCAN_FIELDS = { cash: 'posCash', card: 'posCard', voucher: 'posVoucher', total: 'posTotal' };
+
+  function applyScan(res) {
+    if (!res || typeof res !== 'object') throw { code: 'invalid_json' };
+    var filled = [], missing = [];
+    var names = { cash: '現金', card: '刷卡', voucher: '禮券', total: '總額' };
+    Object.keys(SCAN_FIELDS).forEach(function (k) {
+      var el = $(SCAN_FIELDS[k]);
+      var v = Number(res[k]);
+      if (res[k] != null && res[k] !== '' && isFinite(v)) {
+        el.value = Math.round(v);
+        el.classList.add('scanned');
+        filled.push(names[k]);
+      } else {
+        missing.push(names[k]);
+      }
+    });
+    if (typeof res.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(res.date)) $('date').value = res.date;
+    recompute();
+
+    var lines = [];
+    lines.push(filled.length
+      ? '已填入' + filled.join('、') + '。<b>請對照對帳單逐一確認</b>，確認或修改後黃框就會消失。'
+      : '照片上找不到金額，請重拍或手動輸入。');
+    if (missing.length && filled.length) lines.push('沒讀到：' + missing.join('、') + '，請手動輸入。');
+    if (Array.isArray(res.others) && res.others.length) {
+      lines.push('對帳單上的其他項目：' + res.others.map(function (o) {
+        return esc(o && o.label) + ' ' + fmt(o && o.amount);
+      }).join('、'));
+    }
+    if (res.note) lines.push('備註：' + esc(res.note));
+    showMsg($('scanMsg'), filled.length ? 'warn' : 'bad', lines.join('<br>'));
+  }
+
+  function scanPhoto(file) {
+    if (!file || !sample) return;
+    $('scanBox').classList.add('busy');
+    showMsg($('scanMsg'), 'warn', '辨識中，大約需要 10～30 秒…');
+    sample.json(SCAN_PROMPT, { images: [file] }).then(applyScan).catch(function (e) {
+      var code = e && e.code;
+      var text = {
+        not_granted: '沒有允許這個網頁使用 Claude，無法辨識照片，請手動輸入。',
+        sampling_disabled: '這個帳號無法使用照片辨識，請手動輸入。',
+        image_rejected: '這張照片無法讀取，請換一張照片（JPG 或 PNG）。',
+        invalid_json: '照片看不清楚，請在光線充足的地方拍正、拍清楚後再試一次。',
+        rate_limited: '短時間內辨識太多次，請稍等一下再試，或先手動輸入。',
+        refused: '無法辨識這張照片，請手動輸入。'
+      }[code] || '辨識失敗，請再試一次或手動輸入。';
+      if (code === 'not_granted' || code === 'sampling_disabled' || code === 'images_unavailable') {
+        $('scanBox').classList.add('hidden');
+      }
+      showMsg($('scanMsg'), 'bad', text);
+    }).then(function () { $('scanBox').classList.remove('busy'); });
+  }
+
   function initStorage() {
     var c = window.claude;
     if (!c || typeof c.use !== 'function') { useLocal(); return; }
+    initScan(c);
     // 在 Artifact 檢視器裡：列印按鈕無作用，改用平台提供的資料庫與下載
     $('print').classList.add('hidden');
     c.use('downloads').then(function (ns) { downloads = ns; }, function () {});
@@ -655,6 +753,8 @@
     $('serials').value = (r.serials || []).join('\n');
     $('reason').value = r.reason || '';
     $('supervisor').value = r.supervisor || '';
+    document.querySelectorAll('.scanned').forEach(function (el) { el.classList.remove('scanned'); });
+    hideMsg($('scanMsg'));
     hideMsg($('saveMsg'));
     recompute();
   }
@@ -792,7 +892,8 @@
     b.addEventListener('click', function () { switchView(b.dataset.view); });
   });
 
-  $('view-entry').addEventListener('input', function () {
+  $('view-entry').addEventListener('input', function (e) {
+    if (e.target.classList.contains('scanned')) e.target.classList.remove('scanned');
     hideMsg($('saveMsg'));
     recompute();
   });
@@ -801,6 +902,11 @@
       e.target.closest('tr').remove();
       recompute();
     }
+  });
+  $('scanFile').addEventListener('change', function () {
+    var f = this.files[0];
+    this.value = '';
+    scanPhoto(f);
   });
   $('addCard').addEventListener('click', function () { addCardRow(); });
   $('addVoucher').addEventListener('click', function () { addVoucherRow(); });
