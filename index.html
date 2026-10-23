@@ -135,11 +135,15 @@
   button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .scan { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
   .scan-btn {
-    display: inline-block; cursor: pointer;
-    background: var(--accent); color: #fff; font-weight: 600; font-size: 15px;
-    border-radius: 6px; padding: 10px 16px;
+    background: var(--accent); border-color: var(--accent); color: #fff;
+    font-weight: 600; padding: 10px 16px;
   }
-  .scan.busy .scan-btn { opacity: 0.5; pointer-events: none; }
+  .scan-btn:disabled { opacity: 0.5; cursor: default; }
+  /* 不用 display:none：部分手機瀏覽器與 App 內建瀏覽器不會替隱藏的檔案欄位開啟選擇畫面 */
+  .file-offscreen {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); border: 0; opacity: 0;
+  }
   input.scanned { outline: 2px solid var(--warn); background: var(--warn-bg); }
   .dialog-backdrop {
     position: fixed; inset: 0; z-index: 20;
@@ -185,9 +189,9 @@
     <div class="card">
       <h2>1. POS 對帳單 <small>照列印的日結單輸入</small></h2>
       <div id="scanBox" class="scan hidden">
-        <label class="scan-btn" for="scanFile">拍照辨識對帳單</label>
-        <input type="file" id="scanFile" accept="image/*" capture="environment" class="hidden">
-        <span class="muted">拍照或選擇照片，自動填入下面的金額</span>
+        <button type="button" class="scan-btn" id="scanBtn">拍照辨識對帳單</button>
+        <input type="file" id="scanFile" accept="image/*" class="file-offscreen" tabindex="-1" aria-hidden="true">
+        <span class="muted">拍照或選擇照片，自動填入下面的金額。電腦上也可以直接把照片拖進這一區，或貼上（Ctrl+V）。</span>
       </div>
       <div id="scanMsg" class="msg hidden" style="margin:0 0 12px"></div>
       <div class="grid">
@@ -472,7 +476,7 @@
 
   function scanPhoto(file) {
     if (!file || !sample) return;
-    $('scanBox').classList.add('busy');
+    $('scanBtn').disabled = true;
     showMsg($('scanMsg'), 'warn', '辨識中，大約需要 10～30 秒…');
     sample.json(SCAN_PROMPT, { images: [file] }).then(applyScan).catch(function (e) {
       var code = e && e.code;
@@ -488,7 +492,7 @@
         $('scanBox').classList.add('hidden');
       }
       showMsg($('scanMsg'), 'bad', text);
-    }).then(function () { $('scanBox').classList.remove('busy'); });
+    }).then(function () { $('scanBtn').disabled = false; });
   }
 
   function initStorage() {
@@ -919,6 +923,34 @@
       e.target.closest('tr').remove();
       recompute();
     }
+  });
+  $('scanBtn').addEventListener('click', function () {
+    // 先給看得到的回應，萬一這個瀏覽器打不開選擇照片的畫面，也知道怎麼處理
+    showMsg($('scanMsg'), 'warn', '請拍照或選擇對帳單照片。如果一直沒有出現拍照／選照片的畫面，' +
+      '請改用手機的 Safari 或 Chrome 開啟這個網頁連結，或在電腦上把照片拖進這一區。');
+    $('scanFile').click();
+  });
+  function firstImage(list) {
+    for (var i = 0; list && i < list.length; i++) {
+      var f = list[i].getAsFile ? (list[i].kind === 'file' ? list[i].getAsFile() : null) : list[i];
+      if (f && /^image\//.test(f.type)) return f;
+    }
+    return null;
+  }
+  var posCard = $('scanBox').parentNode;
+  posCard.addEventListener('dragover', function (e) {
+    if (sample) e.preventDefault();
+  });
+  posCard.addEventListener('drop', function (e) {
+    if (!sample) return;
+    e.preventDefault();
+    var f = firstImage(e.dataTransfer && e.dataTransfer.files);
+    if (f) scanPhoto(f);
+  });
+  document.addEventListener('paste', function (e) {
+    if (!sample || $('view-entry').classList.contains('hidden')) return;
+    var f = firstImage(e.clipboardData && e.clipboardData.items);
+    if (f) { e.preventDefault(); scanPhoto(f); }
   });
   $('scanFile').addEventListener('change', function () {
     var f = this.files[0];
