@@ -315,18 +315,29 @@
   var downloads = null;
   var sample = null;  // 用 Claude 辨識對帳單照片
 
+  // 依照本店 POS「讀帳條」的版面撰寫：上方是交易筆數與銷售總計，
+  // 中間是各付款方式（名稱、筆數、金額），最後一行「總計」是付款合計。
   var SCAN_PROMPT = [
-    '這張照片是台灣零售 POS 機列印的「每日日結對帳單」（熱感紙收據）。',
-    '請讀出當日的以下金額（新台幣，整數，不要逗號或貨幣符號）：',
-    '- cash：現金',
-    '- card：信用卡／刷卡',
-    '- voucher：禮券（可能寫作禮券、商品券、提貨券）',
-    '- total：當日營業總額（可能寫作總計、合計、營業額、總額）',
-    '若對帳單上有日期，讀成 date（格式 YYYY-MM-DD；民國年請換算成西元年）。',
-    '若有其他付款方式或退貨、折讓、作廢等金額，列在 others。',
-    '看不到或無法確定的欄位填 null，不要猜。',
-    '只回傳一個 JSON 物件，格式如下：',
-    '{"date":"2026-10-21","cash":12000,"card":8000,"voucher":1500,"total":21500,"others":[{"label":"退貨","amount":-300}],"note":"看不清楚或不確定的地方，沒有就空字串"}'
+    '這張照片是台灣 POS 機列印的「讀帳條」（每日日結對帳單，熱感紙）。版面由上到下是：',
+    '1. 抬頭：列印時間、機號、入帳日期、結帳人員。',
+    '2. 交易筆數：一般交易筆數、退貨筆數、作廢筆數、總計（這是筆數，不是金額）。',
+    '3. 銷售金額：應稅(未稅)合計、稅額、免稅合計、零稅合計、代收合計、總計，以及折讓額。',
+    '4. 付款方式明細：每一行是「付款方式名稱 筆數 金額」，例如「聯合信用卡(連 4 32,890」，最後一行「總計 筆數 金額」是付款合計。',
+    '5. 使用發票張數與發票號碼區間。',
+    '',
+    '請只依照第 4 段「付款方式明細」分類金額（新台幣整數，去掉逗號）：',
+    '- cash：名稱含「現金」的金額；第 4 段沒有現金這一行就填 0。',
+    '- card：所有信用卡類付款的金額加總（例如聯合信用卡、各銀行信用卡、銀聯卡、國旅卡）；沒有就填 0。',
+    '- voucher：禮券類付款的金額加總（例如禮券、商品券、提貨券、禮物卡）；沒有就填 0。',
+    '- total：第 4 段最後一行「總計」的金額。',
+    '- salesTotal：第 3 段的「總計」金額。',
+    '- 不屬於上面三類的付款方式（例如電子支付、LINE Pay、街口、悠遊卡、點數折抵），每一項列在 others，label 用對帳單上的名稱。',
+    '- 退貨筆數、作廢筆數、折讓額只要不是 0，也列在 others（label 例如「退貨筆數」，amount 填對帳單上的數字）。',
+    '- date：「入帳日期」，格式 YYYY-MM-DD（民國年請換算成西元年）。',
+    '- machine：「機號」；cashier：「結帳人員」。',
+    '如果整個第 4 段看不清楚，cash、card、voucher、total 都填 null；個別數字看不清楚就那一項填 null，不要猜。',
+    '只回傳一個 JSON 物件，例如：',
+    '{"date":"2026-10-22","machine":"304000","cashier":"王小明","cash":0,"card":32890,"voucher":0,"total":32890,"salesTotal":32890,"others":[],"note":"看不清楚或不確定的地方，沒有就空字串"}'
   ].join('\n');
 
   var $ = function (id) { return document.getElementById(id); };
@@ -437,6 +448,8 @@
       }
     });
     if (typeof res.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(res.date)) $('date').value = res.date;
+    if (res.machine && !$('station').value.trim()) $('station').value = '機號 ' + String(res.machine).trim();
+    if (res.cashier && !$('cashier').value.trim()) $('cashier').value = String(res.cashier).trim();
     recompute();
 
     var lines = [];
@@ -448,6 +461,10 @@
       lines.push('對帳單上的其他項目：' + res.others.map(function (o) {
         return esc(o && o.label) + ' ' + fmt(o && o.amount);
       }).join('、'));
+    }
+    var salesTotal = Number(res.salesTotal);
+    if (res.salesTotal != null && isFinite(salesTotal) && res.total != null && Math.round(salesTotal) !== toInt(res.total)) {
+      lines.push('注意：對帳單上的銷售總計 ' + fmt(salesTotal) + ' 與付款合計 ' + fmt(res.total) + ' 不同，請確認。');
     }
     if (res.note) lines.push('備註：' + esc(res.note));
     showMsg($('scanMsg'), filled.length ? 'warn' : 'bad', lines.join('<br>'));
