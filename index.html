@@ -214,6 +214,8 @@
         <label>禮券<input class="num" id="posVoucher" inputmode="numeric" type="number"></label>
         <label>其他（紅利折抵等）<input class="num" id="posOther" inputmode="numeric" type="number" placeholder="0"></label>
         <label>總額<input class="num" id="posTotal" inputmode="numeric" type="number"></label>
+        <label>一般交易筆數<input class="num" id="posTx" inputmode="numeric" type="number" min="0"></label>
+        <label>退貨筆數<input class="num" id="posReturns" inputmode="numeric" type="number" min="0"></label>
       </div>
       <div id="posCheck" class="msg hidden"></div>
     </div>
@@ -233,6 +235,7 @@
           <tbody id="compRows"></tbody>
         </table>
         <div id="compResult" class="msg hidden"></div>
+        <div id="compCount" class="msg hidden"></div>
         <div id="suspectBox" class="hidden">
           <h3>優先檢查這幾張訂單</h3>
           <ol class="suspects" id="suspectRows"></ol>
@@ -386,11 +389,12 @@
     '- salesTotal：第 3 段的「總計」金額。',
     '- 不屬於上面三類的付款方式，每一項也列在 others，label 用對帳單上的名稱。',
     '- 退貨筆數、作廢筆數、折讓額只要不是 0，也列在 others（label 例如「退貨筆數」，amount 填對帳單上的數字）。',
+    '- txCount：第 2 段的「一般交易筆數」；returnCount：第 2 段的「退貨筆數」（都是筆數，不是金額）。',
     '- date：「入帳日期」，格式 YYYY-MM-DD（民國年請換算成西元年）。',
     '- machine：「機號」；cashier：「結帳人員」。',
     '如果整個第 4 段看不清楚，cash、card、voucher、total 都填 null；個別數字看不清楚就那一項填 null，不要猜。',
     '只回傳一個 JSON 物件，例如：',
-    '{"date":"2026-10-22","machine":"304000","cashier":"王小明","cash":0,"card":32890,"voucher":0,"other":0,"total":32890,"salesTotal":32890,"others":[],"note":"看不清楚或不確定的地方，沒有就空字串"}'
+    '{"date":"2026-10-22","machine":"304000","cashier":"王小明","cash":0,"card":32890,"voucher":0,"other":0,"total":32890,"txCount":4,"returnCount":0,"salesTotal":32890,"others":[],"note":"看不清楚或不確定的地方，沒有就空字串"}'
   ].join('\n');
 
   var $ = function (id) { return document.getElementById(id); };
@@ -501,6 +505,13 @@
       }
     });
     if (typeof res.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(res.date)) $('date').value = res.date;
+    [['txCount', 'posTx'], ['returnCount', 'posReturns']].forEach(function (p) {
+      var n = Number(res[p[0]]);
+      if (res[p[0]] != null && res[p[0]] !== '' && isFinite(n)) {
+        $(p[1]).value = Math.round(n);
+        $(p[1]).classList.add('scanned');
+      }
+    });
     if (res.machine && !$('station').value.trim()) $('station').value = '機號 ' + String(res.machine).trim();
     if (res.cashier && !$('cashier').value.trim()) $('cashier').value = String(res.cashier).trim();
     recompute();
@@ -759,6 +770,40 @@
     return '<span' + (l.amount < 0 ? ' class="neg"' : '') + '>' + esc(l.name || l.code) + ' ' + fmt(l.amount) + '</span>';
   }
 
+  // 電腦的「當日新訂單」張數與退貨沖銷張數。前一天開單、今天才退貨的訂單只算退貨。
+  function compCounts(comp) {
+    var fresh = 0, refunds = 0;
+    comp.orders.forEach(function (o) {
+      if (!comp.date || !o.orderDate || o.orderDate === comp.date) fresh++;
+      if (o.lines.some(function (l) { return l.amount < 0; })) refunds++;
+    });
+    return { fresh: fresh, refunds: refunds };
+  }
+
+  function renderCounts(comp, pos, d) {
+    var el = $('compCount');
+    var c = compCounts(comp);
+    var line = '筆數：電腦當日訂單 ' + c.fresh + ' 張' + (c.refunds ? '、退貨沖銷 ' + c.refunds + ' 張' : '');
+    if (pos.tx == null) {
+      showMsg(el, 'warn', line + '。在第 1 區填入 POS 的「一般交易筆數」，就能檢查電腦有沒有漏登訂單。');
+      return;
+    }
+    line += '；POS 一般交易 ' + pos.tx + ' 筆' + (pos.returns ? '、退貨 ' + pos.returns + ' 筆' : '') + '。';
+    var gap = pos.tx - c.fresh;
+    if (gap > 0) {
+      var hint = d && d.total < 0
+        ? '要找的是 POS 有、電腦沒有的訂單，合計 ' + fmt(-d.total) + ' 元' +
+          CATS.filter(function (k) { return d[k] < 0; }).map(function (k) { return '（電腦' + CAT_NAMES[k] + '少 ' + fmt(-d[k]) + '）'; }).join('') + '。'
+        : '';
+      showMsg(el, 'bad', '✗ ' + line + '<br><b>電腦可能漏登 ' + gap + ' 張訂單。</b>' + hint +
+        '請用發票存根或刷卡簽單，對照下方「全部訂單明細」找出電腦沒有的那幾張。');
+    } else if (gap < 0) {
+      showMsg(el, 'bad', '✗ ' + line + '<br>電腦比 POS 多 ' + (-gap) + ' 張：可能是電腦重複登錄，或有 POS 已作廢、電腦沒刪除的訂單。');
+    } else {
+      showMsg(el, 'ok', '✓ ' + line + '張數一致，電腦沒有漏登訂單。');
+    }
+  }
+
   function renderComp(r, posFilled) {
     var comp = r.comp;
     $('compBody').classList.toggle('hidden', !comp);
@@ -790,6 +835,7 @@
         : '<br>找不到金額剛好相符的訂單。如果是 POS 比電腦多，很可能是電腦漏登了一張訂單：' +
           '請拿當天的發票存根，對照下面的「全部訂單明細」找出電腦沒有的那一張。'));
     }
+    renderCounts(comp, r.pos, d);
     $('suspectBox').classList.toggle('hidden', !suspects.length);
     $('suspectRows').innerHTML = suspects.map(function (s) {
       return '<li>' + s.items.map(function (x) {
@@ -898,7 +944,10 @@
       card: toInt($('posCard').value),
       voucher: toInt($('posVoucher').value),
       other: toInt($('posOther').value),
-      total: toInt($('posTotal').value)
+      total: toInt($('posTotal').value),
+      // 筆數只用來比對電腦訂單張數，不參與金額加總；空白代表沒填
+      tx: $('posTx').value === '' ? null : toInt($('posTx').value),
+      returns: $('posReturns').value === '' ? null : toInt($('posReturns').value)
     };
     // 紅利折抵等「其他」不是收進來的錢，不需點收，直接沿用 POS 的金額
     var actual = {
@@ -1097,6 +1146,8 @@
     $('posCard').value = r.pos && r.pos.card != null ? r.pos.card : '';
     $('posVoucher').value = r.pos && r.pos.voucher != null ? r.pos.voucher : '';
     $('posOther').value = r.pos && r.pos.other ? r.pos.other : '';
+    $('posTx').value = r.pos && r.pos.tx != null ? r.pos.tx : '';
+    $('posReturns').value = r.pos && r.pos.returns != null ? r.pos.returns : '';
     compReport = r.comp || null;
     hideMsg($('compMsg'));
     $('posTotal').value = r.pos && r.pos.total != null ? r.pos.total : '';
