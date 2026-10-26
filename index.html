@@ -144,6 +144,20 @@
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
     overflow: hidden; clip: rect(0 0 0 0); border: 0; opacity: 0;
   }
+  .card h3 { margin: 14px 0 6px; font-size: 15px; }
+  td small, .sub { display: block; color: var(--muted); font-size: 12px; font-weight: normal; }
+  .suspects { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .suspects li { border: 1px solid var(--border); border-left: 4px solid var(--bad); border-radius: 6px; padding: 8px 10px; }
+  .suspects .order { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .suspects .order + .order { margin-top: 4px; }
+  .suspects .amt { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .suspects .why { margin-top: 6px; font-size: 14px; }
+  .orders td { vertical-align: top; }
+  .orders td.lines { text-align: right; }
+  .neg { color: var(--bad); }
+  .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; word-break: break-all; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--accent); }
   input.scanned { outline: 2px solid var(--warn); background: var(--warn-bg); }
   .dialog-backdrop {
     position: fixed; inset: 0; z-index: 20;
@@ -198,13 +212,46 @@
         <label>現金<input class="num" id="posCash" inputmode="numeric" type="number"></label>
         <label>刷卡<input class="num" id="posCard" inputmode="numeric" type="number"></label>
         <label>禮券<input class="num" id="posVoucher" inputmode="numeric" type="number"></label>
+        <label>其他（紅利折抵等）<input class="num" id="posOther" inputmode="numeric" type="number" placeholder="0"></label>
         <label>總額<input class="num" id="posTotal" inputmode="numeric" type="number"></label>
       </div>
       <div id="posCheck" class="msg hidden"></div>
     </div>
 
+    <div class="card" id="compCard">
+      <h2>2. 電腦對帳單 <small>匯入電腦系統匯出的明細 Excel</small></h2>
+      <div class="scan">
+        <button type="button" class="scan-btn" id="compBtn">匯入電腦對帳單</button>
+        <input type="file" id="compFile" accept=".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="file-offscreen" tabindex="-1" aria-hidden="true">
+        <span class="muted">選擇電腦匯出的 cwpcr411 明細檔（.xls 或 .xlsx），電腦上也可以直接把檔案拖進這一區。</span>
+      </div>
+      <div id="compMsg" class="msg hidden" style="margin:0 0 12px"></div>
+      <div id="compBody" class="hidden">
+        <p class="muted" id="compInfo" style="margin:0 0 6px"></p>
+        <table>
+          <thead><tr><th>款別</th><th>電腦</th><th>POS</th><th>差額</th></tr></thead>
+          <tbody id="compRows"></tbody>
+        </table>
+        <div id="compResult" class="msg hidden"></div>
+        <div id="suspectBox" class="hidden">
+          <h3>優先檢查這幾張訂單</h3>
+          <ol class="suspects" id="suspectRows"></ol>
+        </div>
+        <details>
+          <summary id="ordersSummary">全部訂單明細</summary>
+          <div class="table-wrap">
+            <table class="orders">
+              <thead><tr><th>訂單單號</th><th>付款</th></tr></thead>
+              <tbody id="orderRows"></tbody>
+            </table>
+          </div>
+        </details>
+        <div class="row-actions"><button type="button" class="small danger" id="compClear">移除電腦對帳單</button></div>
+      </div>
+    </div>
+
     <div class="card">
-      <h2>2. 現金點收 <small>輸入各面額張數／枚數</small></h2>
+      <h2>3. 現金點收 <small>輸入各面額張數／枚數</small></h2>
       <table>
         <thead><tr><th>面額</th><th>數量</th><th>小計</th></tr></thead>
         <tbody id="cashRows"></tbody>
@@ -220,7 +267,7 @@
     </div>
 
     <div class="card">
-      <h2>3. 刷卡 <small>依刷卡機結帳單輸入</small></h2>
+      <h2>4. 刷卡 <small>依刷卡機結帳單輸入</small></h2>
       <table>
         <thead><tr><th>刷卡機／卡別</th><th>金額</th><th></th></tr></thead>
         <tbody id="cardRows"></tbody>
@@ -232,7 +279,7 @@
     </div>
 
     <div class="card">
-      <h2>4. 禮券 <small>依面額輸入張數</small></h2>
+      <h2>5. 禮券 <small>依面額輸入張數</small></h2>
       <table>
         <thead><tr><th>面額</th><th>張數</th><th>小計</th><th></th></tr></thead>
         <tbody id="voucherRows"></tbody>
@@ -248,7 +295,7 @@
     </div>
 
     <div class="card">
-      <h2>5. 比對結果</h2>
+      <h2>6. 比對結果 <small>POS 與實際點收</small></h2>
       <table>
         <thead><tr><th>項目</th><th>POS</th><th>實收</th><th>差額</th></tr></thead>
         <tbody id="compareRows"></tbody>
@@ -318,6 +365,7 @@
   var db = null;      // 發佈成 Artifact 時使用共享資料庫
   var downloads = null;
   var sample = null;  // 用 Claude 辨識對帳單照片
+  var compReport = null;  // 匯入的電腦對帳單（訂單明細）
 
   // 依照本店 POS「讀帳條」的版面撰寫：上方是交易筆數與銷售總計，
   // 中間是各付款方式（名稱、筆數、金額），最後一行「總計」是付款合計。
@@ -333,15 +381,16 @@
     '- cash：名稱含「現金」的金額；第 4 段沒有現金這一行就填 0。',
     '- card：所有信用卡類付款的金額加總（例如聯合信用卡、各銀行信用卡、銀聯卡、國旅卡）；沒有就填 0。',
     '- voucher：禮券類付款的金額加總（例如禮券、商品券、提貨券、禮物卡）；沒有就填 0。',
+    '- other：不屬於上面三類的付款方式金額加總（例如紅利折抵、點數折抵、電子支付、LINE Pay、悠遊卡）；沒有就填 0。',
     '- total：第 4 段最後一行「總計」的金額。',
     '- salesTotal：第 3 段的「總計」金額。',
-    '- 不屬於上面三類的付款方式（例如電子支付、LINE Pay、街口、悠遊卡、點數折抵），每一項列在 others，label 用對帳單上的名稱。',
+    '- 不屬於上面三類的付款方式，每一項也列在 others，label 用對帳單上的名稱。',
     '- 退貨筆數、作廢筆數、折讓額只要不是 0，也列在 others（label 例如「退貨筆數」，amount 填對帳單上的數字）。',
     '- date：「入帳日期」，格式 YYYY-MM-DD（民國年請換算成西元年）。',
     '- machine：「機號」；cashier：「結帳人員」。',
     '如果整個第 4 段看不清楚，cash、card、voucher、total 都填 null；個別數字看不清楚就那一項填 null，不要猜。',
     '只回傳一個 JSON 物件，例如：',
-    '{"date":"2026-10-22","machine":"304000","cashier":"王小明","cash":0,"card":32890,"voucher":0,"total":32890,"salesTotal":32890,"others":[],"note":"看不清楚或不確定的地方，沒有就空字串"}'
+    '{"date":"2026-10-22","machine":"304000","cashier":"王小明","cash":0,"card":32890,"voucher":0,"other":0,"total":32890,"salesTotal":32890,"others":[],"note":"看不清楚或不確定的地方，沒有就空字串"}'
   ].join('\n');
 
   var $ = function (id) { return document.getElementById(id); };
@@ -434,12 +483,12 @@
     }, function () {});
   }
 
-  var SCAN_FIELDS = { cash: 'posCash', card: 'posCard', voucher: 'posVoucher', total: 'posTotal' };
+  var SCAN_FIELDS = { cash: 'posCash', card: 'posCard', voucher: 'posVoucher', other: 'posOther', total: 'posTotal' };
 
   function applyScan(res) {
     if (!res || typeof res !== 'object') throw { code: 'invalid_json' };
     var filled = [], missing = [];
-    var names = { cash: '現金', card: '刷卡', voucher: '禮券', total: '總額' };
+    var names = { cash: '現金', card: '刷卡', voucher: '禮券', other: '其他', total: '總額' };
     Object.keys(SCAN_FIELDS).forEach(function (k) {
       var el = $(SCAN_FIELDS[k]);
       var v = Number(res[k]);
@@ -505,6 +554,263 @@
     c.use('db').then(function (ns) {
       if (ns) useDb(ns); else useLocal();
     }, useLocal);
+  }
+
+  // ---------- 電腦對帳單（cwpcr411 明細 Excel） ----------
+  var XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+
+  function loadXlsx() {
+    if (window.XLSX) return Promise.resolve(window.XLSX);
+    return new Promise(function (resolve, reject) {
+      var el = document.createElement('script');
+      el.src = XLSX_URL;
+      el.onload = function () { window.XLSX ? resolve(window.XLSX) : reject(new Error('xlsx')); };
+      el.onerror = function () { reject(new Error('xlsx')); };
+      (document.head || document.body).appendChild(el);
+    });
+  }
+
+  function categoryOf(code, name) {
+    name = String(name || '');
+    if (code === '01' || /現金/.test(name)) return 'cash';
+    if (/信用卡|卡\(|銀聯|國旅/.test(name)) return 'card';
+    if (/禮券|禮物卡|提貨券|商品券/.test(name)) return 'voucher';
+    return 'other';
+  }
+
+  function cellDate(v) {
+    if (typeof v === 'number' && v > 20000 && v < 80000) {
+      return new Date(Math.round((v - 25569) * 864e5)).toISOString().slice(0, 10);
+    }
+    var m = String(v || '').match(/(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
+    if (m) return m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2);
+    return '';
+  }
+
+  // rows：工作表的二維陣列。每張訂單第一行有訂單單號；同一張訂單的其他付款方式、
+  // 退貨沖銷，會接在下面且訂單單號空白。遇到「總計」那一行結束。
+  function parseReport(rows) {
+    var h = -1;
+    for (var i = 0; i < rows.length && i < 30; i++) {
+      if (rows[i].some(function (c) { return String(c).trim() === '收款別'; })) { h = i; break; }
+    }
+    if (h < 0) throw new Error('找不到「收款別」欄位，請確認選的是電腦對帳單明細檔。');
+    var col = {};
+    rows[h].forEach(function (c, j) { col[String(c).trim()] = j; });
+    function get(row, name) { return col[name] == null ? '' : row[col[name]]; }
+    if (col['訂單單號'] == null) throw new Error('這份報表沒有「訂單單號」欄位，請匯出明細版的電腦對帳單。');
+    var amountCol = col['小計'] != null ? '小計' : '全收款金額';
+
+    var orders = [], cur = null, reportTotal = null, dates = {};
+    for (var r = h + 1; r < rows.length; r++) {
+      var row = rows[r];
+      var labels = row.map(function (c) { return String(c).trim(); });
+      if (labels.indexOf('合計') >= 0 || labels.indexOf('總計') >= 0) {
+        reportTotal = toInt(get(row, amountCol));
+        if (labels.indexOf('總計') >= 0) break;
+        continue;
+      }
+      var no = String(get(row, '訂單單號')).trim();
+      var code = String(get(row, '收款別')).trim();
+      var amtRaw = get(row, amountCol);
+      if (no) {
+        cur = {
+          no: no,
+          staff: String(get(row, '業務員')).trim(),
+          orderDate: cellDate(get(row, '訂單日期')),
+          lines: []
+        };
+        orders.push(cur);
+        var d = cellDate(get(row, '對帳日期'));
+        if (d) dates[d] = (dates[d] || 0) + 1;
+      }
+      if (!cur || (!code && amtRaw === '')) continue;
+      var name = String(get(row, 'POS款別名稱')).trim();
+      var amount = toInt(amtRaw);
+      if (!amount) continue;
+      cur.lines.push({ code: code, name: name, cat: categoryOf(code, name), amount: amount });
+    }
+    if (!orders.length) throw new Error('報表裡沒有任何訂單。');
+
+    var totals = { cash: 0, card: 0, voucher: 0, other: 0, total: 0 };
+    orders.forEach(function (o) {
+      o.lines.forEach(function (l) { totals[l.cat] += l.amount; totals.total += l.amount; });
+    });
+    var date = Object.keys(dates).sort(function (a, b) { return dates[b] - dates[a]; })[0] || '';
+    return { date: date, orders: orders, totals: totals, reportTotal: reportTotal };
+  }
+
+  function importReport(file) {
+    if (!file) return;
+    $('compBtn').disabled = true;
+    showMsg($('compMsg'), 'warn', '讀取中…');
+    loadXlsx().then(function (XLSX) {
+      return file.arrayBuffer().then(function (buf) {
+        var wb = XLSX.read(buf, { type: 'array' });
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        return parseReport(XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' }));
+      });
+    }).then(function (rep) {
+      rep.fileName = file.name;
+      compReport = rep;
+      var notes = ['✓ 已匯入 ' + rep.orders.length + ' 張訂單。'];
+      if (rep.reportTotal != null && rep.reportTotal !== rep.totals.total) {
+        notes.push('⚠ 各訂單加總 ' + fmt(rep.totals.total) + ' 與報表總計 ' + fmt(rep.reportTotal) + ' 不同，請確認檔案是否完整。');
+      }
+      if (rep.date && $('date').value && rep.date !== $('date').value) {
+        notes.push('⚠ 電腦對帳單的對帳日期是 ' + rep.date + '，與上方日期 ' + $('date').value + ' 不同，請確認是不是同一天。');
+      }
+      showMsg($('compMsg'), notes.length > 1 ? 'warn' : 'ok', notes.join('<br>'));
+      recompute();
+    }).catch(function (e) {
+      var msg = e && e.message === 'xlsx'
+        ? '無法載入讀取 Excel 的元件，請確認網路連線後再試一次。'
+        : '無法讀取這個檔案：' + esc(e && e.message || '格式不正確') ;
+      showMsg($('compMsg'), 'bad', msg);
+    }).then(function () { $('compBtn').disabled = false; });
+  }
+
+  // 相鄰兩位數字對調（例如 7890 → 7980）後，差額剛好等於 diff 時回傳對調後的金額
+  function transposeMatch(amount, diff) {
+    var s = String(Math.abs(amount));
+    for (var i = 0; i + 1 < s.length; i++) {
+      if (s[i] === s[i + 1]) continue;
+      var b = Number(s.slice(0, i) + s[i + 1] + s[i] + s.slice(i + 2));
+      if (Math.abs(b - Math.abs(amount)) === diff) return b;
+    }
+    return 0;
+  }
+
+  // 依照電腦與 POS 各款別的差額，找出最可能有問題的訂單付款行。
+  // 回傳 [{items:[{order,line}], reasons:[], rank}]，rank 越小越可能。
+  function findSuspects(comp, d) {
+    var all = [];
+    comp.orders.forEach(function (o) { o.lines.forEach(function (l) { all.push({ order: o, line: l }); }); });
+    var out = [], byKey = {};
+    function add(items, reason, rank) {
+      var key = items.map(function (x) { return all.indexOf(x); }).sort().join('+');
+      var e = byKey[key];
+      if (!e) { e = byKey[key] = { items: items, reasons: [], rank: rank }; out.push(e); }
+      else if (e.rank === 0 && rank > 0) return;  // 已判定款別登錯，不再加其他推測
+      if (e.reasons.indexOf(reason) < 0) e.reasons.push(reason);
+      e.rank = Math.min(e.rank, rank);
+    }
+    function N(c) { return CAT_NAMES[c]; }
+
+    // 1. 款別登錯：電腦某款別多 X、另一款別少 X
+    CATS.forEach(function (a) {
+      CATS.forEach(function (b) {
+        var X = d[a];
+        if (a === b || X <= 0 || d[b] !== -X) return;
+        all.forEach(function (x) {
+          if (x.line.cat === a && x.line.amount === X) {
+            add([x], '電腦記為「' + N(a) + '」，POS 可能記為「' + N(b) + '」（款別登錯）', 0);
+          }
+        });
+      });
+    });
+
+    CATS.forEach(function (c) {
+      var X = d[c];
+      if (!X) return;
+      var A = Math.abs(X), before = out.length;
+      var inCat = all.filter(function (x) { return x.line.cat === c; });
+      if (X > 0) {
+        inCat.forEach(function (x) {
+          if (x.line.amount === A) add([x], '電腦' + N(c) + '比 POS 多 ' + fmt(A) + '，這筆金額剛好相同：POS 可能漏打，或電腦重複登錄', 1);
+        });
+      } else {
+        inCat.forEach(function (x) {
+          if (x.line.amount === -A) add([x], '電腦有這筆退貨沖銷，POS 可能沒有做退貨／作廢', 1);
+        });
+        inCat.forEach(function (x) {
+          if (x.line.amount === A) add([x], 'POS ' + N(c) + '比電腦多 ' + fmt(A) + '，這筆金額剛好相同：POS 可能重複打了這筆，或電腦漏登另一張同金額的訂單', 2);
+        });
+        all.forEach(function (x) {
+          if (x.line.cat !== c && x.line.amount === A) {
+            add([x], 'POS ' + N(c) + '多 ' + fmt(A) + '：這筆在電腦記為「' + N(x.line.cat) + '」，請確認款別', 2);
+          }
+        });
+      }
+      inCat.forEach(function (x) {
+        var t = transposeMatch(x.line.amount, A);
+        if (t) add([x], '金額可能打錯：' + fmt(Math.abs(x.line.amount)) + ' 和 ' + fmt(t) + ' 剛好差 ' + fmt(A) + '（數字對調）', 2);
+      });
+      // 沒有單筆剛好相符時，找兩三筆加起來等於差額的組合
+      if (out.length === before) {
+        var pos = inCat.filter(function (x) { return x.line.amount > 0; }).slice(0, 80);
+        var combos = 0;
+        for (var i = 0; i < pos.length && combos < 3; i++) {
+          for (var j = i + 1; j < pos.length && combos < 3; j++) {
+            var s2 = pos[i].line.amount + pos[j].line.amount;
+            if (s2 === A) { add([pos[i], pos[j]], '這 2 筆' + N(c) + '加起來剛好 ' + fmt(A), 3); combos++; continue; }
+            for (var k = j + 1; k < pos.length && combos < 3 && pos.length <= 60; k++) {
+              if (s2 + pos[k].line.amount === A) { add([pos[i], pos[j], pos[k]], '這 3 筆' + N(c) + '加起來剛好 ' + fmt(A), 3); combos++; }
+            }
+          }
+        }
+      }
+    });
+    out.sort(function (a, b) { return a.rank - b.rank; });
+    return out.slice(0, 12);
+  }
+
+  function lineText(l) {
+    return '<span' + (l.amount < 0 ? ' class="neg"' : '') + '>' + esc(l.name || l.code) + ' ' + fmt(l.amount) + '</span>';
+  }
+
+  function renderComp(r, posFilled) {
+    var comp = r.comp;
+    $('compBody').classList.toggle('hidden', !comp);
+    if (!comp) return;
+
+    $('compInfo').textContent = (comp.fileName ? comp.fileName + '　' : '') +
+      (comp.date ? '對帳日期 ' + comp.date + '　' : '') + comp.orders.length + ' 張訂單';
+
+    var d = r.compDiff;
+    var rows = CATS.filter(function (c) { return c !== 'other' || comp.totals.other || r.pos.other; }).concat('total');
+    $('compRows').innerHTML = rows.map(function (k) {
+      var dd = posFilled ? d[k] : null;
+      return '<tr' + (k === 'total' ? ' class="total-row"' : '') + '><td>' + CAT_NAMES[k] + '</td>' +
+        '<td>' + fmt(comp.totals[k]) + '</td><td>' + (posFilled ? fmt(r.pos[k]) : '—') + '</td>' +
+        '<td class="' + (dd === 0 ? 'diff-ok' : dd == null ? '' : 'diff-bad') + '">' +
+        (dd == null ? '—' : dd === 0 ? '✓ 0' : fmtDiff(dd)) + '</td></tr>';
+    }).join('');
+
+    var suspects = [];
+    if (!posFilled) {
+      showMsg($('compResult'), 'warn', '請先在第 1 區輸入或拍照辨識 POS 對帳單，才能比對。');
+    } else if (!anyNonZero(d)) {
+      showMsg($('compResult'), 'ok', '✓ 電腦對帳單與 POS 的現金、刷卡、禮券、總額全部一致');
+    } else {
+      suspects = findSuspects(comp, d);
+      var head = '✗ 電腦對帳單與 POS 不一致（差額 = 電腦 − POS）。';
+      showMsg($('compResult'), 'bad', head + (suspects.length
+        ? '下面列出金額最吻合差額的訂單，請先核對這幾張。'
+        : '<br>找不到金額剛好相符的訂單。如果是 POS 比電腦多，很可能是電腦漏登了一張訂單：' +
+          '請拿當天的發票存根，對照下面的「全部訂單明細」找出電腦沒有的那一張。'));
+    }
+    $('suspectBox').classList.toggle('hidden', !suspects.length);
+    $('suspectRows').innerHTML = suspects.map(function (s) {
+      return '<li>' + s.items.map(function (x) {
+        var refunded = x.order.lines.some(function (l) { return l.amount < 0; });
+        return '<div class="order"><div><span class="mono">' + esc(x.order.no) + '</span>' +
+          '<small class="sub">' + esc(x.order.staff) + (refunded ? '・這張有退貨沖銷' : '') + '</small></div>' +
+          '<div class="amt' + (x.line.amount < 0 ? ' neg' : '') + '">' + esc(x.line.name || x.line.code) + ' ' + fmt(x.line.amount) + '</div></div>';
+      }).join('') + '<div class="why">' + s.reasons.join('<br>') + '</div></li>';
+    }).join('');
+
+    $('ordersSummary').textContent = '全部訂單明細（' + comp.orders.length + ' 張）';
+    $('orderRows').innerHTML = comp.orders.map(function (o) {
+      var sum = o.lines.reduce(function (t, l) { return t + l.amount; }, 0);
+      var flags = [];
+      if (o.lines.some(function (l) { return l.amount < 0; })) flags.push('有退貨沖銷');
+      if (o.lines.length > 1 && o.lines.some(function (l) { return l.cat !== o.lines[0].cat; })) flags.push('多種付款');
+      return '<tr><td class="mono">' + esc(o.no) + '<small>' + esc(o.staff) +
+        (flags.length ? '・' + flags.join('、') : '') + '</small></td>' +
+        '<td class="lines">' + o.lines.map(lineText).join('<br>') +
+        (o.lines.length > 1 ? '<small>合計 ' + fmt(sum) + '</small>' : '') + '</td></tr>';
+    }).join('');
   }
 
   // ---------- in-page confirm (artifact viewer blocks window.confirm) ----------
@@ -591,14 +897,18 @@
       cash: toInt($('posCash').value),
       card: toInt($('posCard').value),
       voucher: toInt($('posVoucher').value),
+      other: toInt($('posOther').value),
       total: toInt($('posTotal').value)
     };
+    // 紅利折抵等「其他」不是收進來的錢，不需點收，直接沿用 POS 的金額
     var actual = {
       cash: cashCounted - cashFloat,
       card: cards.reduce(function (s, c) { return s + c.amount; }, 0),
-      voucher: vouchers.reduce(function (s, v) { return s + v.face * v.count; }, 0)
+      voucher: vouchers.reduce(function (s, v) { return s + v.face * v.count; }, 0),
+      other: pos.other
     };
-    actual.total = actual.cash + actual.card + actual.voucher;
+    actual.total = actual.cash + actual.card + actual.voucher + actual.other;
+    var comp = compReport ? compReport : null;
 
     return {
       date: $('date').value,
@@ -617,13 +927,32 @@
         voucher: actual.voucher - pos.voucher,
         total: actual.total - pos.total
       },
+      comp: comp,
+      compDiff: comp ? compDiffOf(comp, pos) : null,
       reason: $('reason').value.trim(),
       supervisor: $('supervisor').value.trim()
     };
   }
 
-  function hasDiff(r) {
+  var CATS = ['cash', 'card', 'voucher', 'other'];
+  var CAT_NAMES = { cash: '現金', card: '刷卡', voucher: '禮券', other: '其他', total: '總額' };
+
+  function compDiffOf(comp, pos) {
+    var d = {};
+    CATS.concat('total').forEach(function (k) { d[k] = comp.totals[k] - toInt(pos[k]); });
+    return d;
+  }
+
+  function anyNonZero(d) {
+    return !!d && Object.keys(d).some(function (k) { return d[k] !== 0; });
+  }
+
+  function hasActualDiff(r) {
     return r.diff.cash !== 0 || r.diff.card !== 0 || r.diff.voucher !== 0 || r.diff.total !== 0;
+  }
+
+  function hasDiff(r) {
+    return hasActualDiff(r) || anyNonZero(r.compDiff);
   }
 
   // ---------- recompute ----------
@@ -649,14 +978,14 @@
     $('voucherTotal').textContent = fmt(r.actual.voucher);
 
     // POS 對帳單自我驗算
-    var posFilled = ['posCash', 'posCard', 'posVoucher', 'posTotal'].some(function (id) { return $(id).value !== ''; });
-    var posSum = r.pos.cash + r.pos.card + r.pos.voucher;
+    var posFilled = ['posCash', 'posCard', 'posVoucher', 'posOther', 'posTotal'].some(function (id) { return $(id).value !== ''; });
+    var posSum = r.pos.cash + r.pos.card + r.pos.voucher + r.pos.other;
     if (!posFilled) {
       hideMsg($('posCheck'));
     } else if (posSum === r.pos.total) {
-      showMsg($('posCheck'), 'ok', '✓ 現金＋刷卡＋禮券 ＝ 總額，對帳單數字輸入正確');
+      showMsg($('posCheck'), 'ok', '✓ 現金＋刷卡＋禮券＋其他 ＝ 總額，對帳單數字輸入正確');
     } else {
-      showMsg($('posCheck'), 'warn', '⚠ 現金＋刷卡＋禮券 ＝ ' + fmt(posSum) + '，與總額 ' + fmt(r.pos.total) +
+      showMsg($('posCheck'), 'warn', '⚠ 現金＋刷卡＋禮券＋其他 ＝ ' + fmt(posSum) + '，與總額 ' + fmt(r.pos.total) +
         ' 相差 ' + fmtDiff(r.pos.total - posSum) + '。請檢查是否打錯，或對帳單上還有其他付款方式。');
     }
 
@@ -664,7 +993,11 @@
     checkSerials(r, vCount);
 
     // 比對表
-    var items = [['現金', 'cash'], ['刷卡', 'card'], ['禮券', 'voucher'], ['總額', 'total']];
+    renderComp(r, posFilled);
+
+    var items = [['現金', 'cash'], ['刷卡', 'card'], ['禮券', 'voucher']];
+    if (r.pos.other) items.push(['其他（不需點收）', 'other']);
+    items.push(['總額', 'total']);
     $('compareRows').innerHTML = items.map(function (it) {
       var k = it[1], d = r.diff[k];
       return '<tr' + (k === 'total' ? ' class="total-row"' : '') + '><td>' + it[0] + '</td>' +
@@ -672,14 +1005,18 @@
         '<td class="' + (d === 0 ? 'diff-ok' : 'diff-bad') + '">' + (d === 0 ? '✓ 0' : fmtDiff(d)) + '</td></tr>';
     }).join('');
 
-    if (hasDiff(r)) {
+    var msgs = [];
+    if (hasActualDiff(r)) {
       var parts = [];
       if (r.diff.total > 0) parts.push('實收比 POS 多 ' + fmt(r.diff.total) + ' 元');
       if (r.diff.total < 0) parts.push('實收比 POS 少 ' + fmt(-r.diff.total) + ' 元');
-      showMsg($('overall'), 'bad', '✗ 金額不一致' + (parts.length ? '：' + parts.join('') : '（總額相符，但付款方式分配不同）') +
-        '。請重新點收，或在下方填寫差異原因。');
+      msgs.push('✗ 實收與 POS 不一致' + (parts.length ? '：' + parts.join('') : '（總額相符，但付款方式分配不同）') + '。請重新點收。');
+    }
+    if (anyNonZero(r.compDiff)) msgs.push('✗ 電腦對帳單與 POS 不一致，請看第 2 區的「優先檢查」訂單。');
+    if (msgs.length) {
+      showMsg($('overall'), 'bad', msgs.join('<br>') + '<br>查不出原因時，請在下方填寫差異原因。');
     } else {
-      showMsg($('overall'), 'ok', '✓ 全部一致，可以存檔');
+      showMsg($('overall'), 'ok', '✓ 全部一致' + (r.comp ? '（POS、電腦、實收三方相符）' : '') + '，可以存檔');
     }
   }
 
@@ -759,6 +1096,9 @@
     $('posCash').value = r.pos && r.pos.cash != null ? r.pos.cash : '';
     $('posCard').value = r.pos && r.pos.card != null ? r.pos.card : '';
     $('posVoucher').value = r.pos && r.pos.voucher != null ? r.pos.voucher : '';
+    $('posOther').value = r.pos && r.pos.other ? r.pos.other : '';
+    compReport = r.comp || null;
+    hideMsg($('compMsg'));
     $('posTotal').value = r.pos && r.pos.total != null ? r.pos.total : '';
     document.querySelectorAll('.cash-count').forEach(function (inp) {
       var c = r.cashCounts && r.cashCounts[inp.dataset.denom];
@@ -806,10 +1146,10 @@
 
     $('historyEmpty').classList.toggle('hidden', list.length > 0);
     $('historyRows').innerHTML = list.map(function (r) {
-      var d = r.diff.total, bad = hasDiff(r);
+      var d = r.diff.total, bad = hasActualDiff(r) || anyNonZero(r.compDiff);
       return '<tr><td>' + esc(r.date) + '</td><td>' + esc(r.station) + '</td>' +
         '<td>' + fmt(r.pos.total) + '</td><td>' + fmt(r.actual.total) + '</td>' +
-        '<td><span class="badge ' + (bad ? 'bad' : 'ok') + '">' + (bad ? fmtDiff(d) : '✓ 一致') + '</span></td>' +
+        '<td><span class="badge ' + (bad ? 'bad' : 'ok') + '">' + (bad ? (d ? fmtDiff(d) : '✗ 不一致') : '✓ 一致') + '</span></td>' +
         '<td style="white-space:nowrap"><button type="button" class="small" data-open="' + esc(r.id) + '">開啟</button> ' +
         '<button type="button" class="small danger" data-del="' + esc(r.id) + '">刪除</button></td></tr>';
     }).join('');
@@ -846,13 +1186,16 @@
       .filter(function (r) { return !month || (r.date || '').slice(0, 7) === month; })
       .sort(function (a, b) { return (a.date + a.station).localeCompare(b.date + b.station); });
     var header = ['日期', '收銀台', '點收人',
-      'POS現金', 'POS刷卡', 'POS禮券', 'POS總額',
+      'POS現金', 'POS刷卡', 'POS禮券', 'POS其他', 'POS總額',
+      '電腦現金', '電腦刷卡', '電腦禮券', '電腦其他', '電腦總額',
       '實收現金', '實收刷卡', '實收禮券', '實收總額',
       '現金差額', '刷卡差額', '禮券差額', '總額差額',
       '零用金', '禮券序號', '差異原因', '確認主管', '存檔時間'];
     var rows = list.map(function (r) {
       return [r.date, r.station, r.cashier,
-        r.pos.cash, r.pos.card, r.pos.voucher, r.pos.total,
+        r.pos.cash, r.pos.card, r.pos.voucher, r.pos.other || 0, r.pos.total,
+        r.comp ? r.comp.totals.cash : '', r.comp ? r.comp.totals.card : '', r.comp ? r.comp.totals.voucher : '',
+        r.comp ? r.comp.totals.other : '', r.comp ? r.comp.totals.total : '',
         r.actual.cash, r.actual.card, r.actual.voucher, r.actual.total,
         r.diff.cash, r.diff.card, r.diff.voucher, r.diff.total,
         r.cashFloat, (r.serials || []).join(' '), r.reason, r.supervisor,
@@ -956,6 +1299,23 @@
     var f = this.files[0];
     this.value = '';
     scanPhoto(f);
+  });
+  $('compBtn').addEventListener('click', function () { $('compFile').click(); });
+  $('compFile').addEventListener('change', function () {
+    var f = this.files[0];
+    this.value = '';
+    importReport(f);
+  });
+  $('compCard').addEventListener('dragover', function (e) { e.preventDefault(); });
+  $('compCard').addEventListener('drop', function (e) {
+    e.preventDefault();
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) importReport(f);
+  });
+  $('compClear').addEventListener('click', function () {
+    compReport = null;
+    hideMsg($('compMsg'));
+    recompute();
   });
   $('addCard').addEventListener('click', function () { addCardRow(); });
   $('addVoucher').addEventListener('click', function () { addVoucherRow(); });
