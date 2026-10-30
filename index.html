@@ -155,6 +155,7 @@
   .orders td { vertical-align: top; }
   .orders td.lines { text-align: right; }
   .neg { color: var(--bad); }
+  .msg.note { background: var(--bg); color: var(--muted); }
   .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; word-break: break-all; }
   details { margin-top: 12px; }
   summary { cursor: pointer; color: var(--accent); }
@@ -210,9 +211,9 @@
       <div id="scanMsg" class="msg hidden" style="margin:0 0 12px"></div>
       <div class="grid">
         <label>現金<input class="num" id="posCash" inputmode="numeric" type="number"></label>
-        <label>刷卡<input class="num" id="posCard" inputmode="numeric" type="number"></label>
+        <label>刷卡（信用卡＋LinePay＋Mitsui Pay）<input class="num" id="posCard" inputmode="numeric" type="number"></label>
         <label>禮券<input class="num" id="posVoucher" inputmode="numeric" type="number"></label>
-        <label>LinePay／Mitsui Pay／會員折抵<input class="num" id="posOther" inputmode="numeric" type="number" placeholder="0"></label>
+        <label>會員折抵<input class="num" id="posOther" inputmode="numeric" type="number" placeholder="0"></label>
         <label>總額<input class="num" id="posTotal" inputmode="numeric" type="number"></label>
         <label>一般交易筆數<input class="num" id="posTx" inputmode="numeric" type="number" min="0"></label>
         <label>退貨筆數<input class="num" id="posReturns" inputmode="numeric" type="number" min="0"></label>
@@ -270,7 +271,7 @@
     </div>
 
     <div class="card">
-      <h2>4. 刷卡 <small>依刷卡機結帳單輸入</small></h2>
+      <h2>4. 刷卡 <small>刷卡機、LinePay、Mitsui Pay 的結帳金額各填一列</small></h2>
       <table>
         <thead><tr><th>刷卡機／卡別</th><th>金額</th><th></th></tr></thead>
         <tbody id="cardRows"></tbody>
@@ -382,9 +383,9 @@
     '',
     '請只依照第 4 段「付款方式明細」分類金額（新台幣整數，去掉逗號）：',
     '- cash：名稱含「現金」的金額；第 4 段沒有現金這一行就填 0。',
-    '- card：所有信用卡類付款的金額加總（例如聯合信用卡、各銀行信用卡、銀聯卡、國旅卡）；沒有就填 0。',
+    '- card：所有信用卡類付款，加上 LinePay、Mitsui Pay 等電子支付的金額加總（例如聯合信用卡、永豐信用卡、各銀行信用卡、LinePay、Mitsui Pay）；沒有就填 0。',
     '- voucher：禮券類付款的金額加總（例如三井電子抵用券、禮券、商品券、提貨券、禮物卡）；沒有就填 0。',
-    '- other：不屬於上面三類的付款方式金額加總（例如 LinePay、Mitsui Pay、會員折抵、紅利折抵、其他電子支付）；沒有就填 0。',
+    '- other：會員折抵、紅利折抵、點數折抵等折抵金額加總；沒有就填 0。',
     '- total：第 4 段最後一行「總計」的金額。',
     '- salesTotal：第 3 段的「總計」金額。',
     '- 不屬於上面三類的付款方式，每一項也列在 others，label 用對帳單上的名稱。',
@@ -492,7 +493,7 @@
   function applyScan(res) {
     if (!res || typeof res !== 'object') throw { code: 'invalid_json' };
     var filled = [], missing = [];
-    var names = { cash: '現金', card: '刷卡', voucher: '禮券', other: '電子支付／折抵', total: '總額' };
+    var names = { cash: '現金', card: '刷卡', voucher: '禮券', other: '會員折抵', total: '總額' };
     Object.keys(SCAN_FIELDS).forEach(function (k) {
       var el = $(SCAN_FIELDS[k]);
       var v = Number(res[k]);
@@ -780,27 +781,19 @@
     return { fresh: fresh, refunds: refunds };
   }
 
+  // 一張電腦訂單可能對應好幾張發票（交易筆數），所以筆數只當參考，不判斷對錯。
   function renderCounts(comp, pos, d) {
     var el = $('compCount');
     var c = compCounts(comp);
-    var line = '筆數：電腦當日訂單 ' + c.fresh + ' 張' + (c.refunds ? '、退貨沖銷 ' + c.refunds + ' 張' : '');
-    if (pos.tx == null) {
-      showMsg(el, 'warn', line + '。在第 1 區填入 POS 的「一般交易筆數」，就能檢查電腦有沒有漏登訂單。');
-      return;
-    }
-    line += '；POS 一般交易 ' + pos.tx + ' 筆' + (pos.returns ? '、退貨 ' + pos.returns + ' 筆' : '') + '。';
-    var gap = pos.tx - c.fresh;
-    if (gap > 0) {
-      var hint = d && d.total < 0
-        ? '要找的是 POS 有、電腦沒有的訂單，合計 ' + fmt(-d.total) + ' 元' +
-          CATS.filter(function (k) { return d[k] < 0; }).map(function (k) { return '（電腦' + CAT_NAMES[k] + '少 ' + fmt(-d[k]) + '）'; }).join('') + '。'
-        : '';
-      showMsg(el, 'bad', '✗ ' + line + '<br><b>電腦可能漏登 ' + gap + ' 張訂單。</b>' + hint +
-        '請用發票存根或刷卡簽單，對照下方「全部訂單明細」找出電腦沒有的那幾張。');
-    } else if (gap < 0) {
-      showMsg(el, 'bad', '✗ ' + line + '<br>電腦比 POS 多 ' + (-gap) + ' 張：可能是電腦重複登錄，或有 POS 已作廢、電腦沒刪除的訂單。');
+    var line = '參考筆數：電腦當日訂單 ' + c.fresh + ' 張' + (c.refunds ? '、含退貨沖銷 ' + c.refunds + ' 張' : '');
+    if (pos.tx != null) line += '；POS 一般交易 ' + pos.tx + ' 筆' + (pos.returns ? '、退貨 ' + pos.returns + ' 筆' : '');
+    line += '。一張電腦訂單可能開了好幾張發票，筆數不同不代表有錯。';
+    if (d && d.total < 0) {
+      showMsg(el, 'bad', '<b>POS 總額比電腦多 ' + fmt(-d.total) + ' 元，可能是電腦漏登訂單。</b>要找的是 POS 有、電腦沒有的訂單' +
+        CATS.filter(function (k) { return d[k] < 0; }).map(function (k) { return '（電腦' + CAT_NAMES[k] + '少 ' + fmt(-d[k]) + '）'; }).join('') +
+        '，請用發票存根或刷卡簽單，對照下方「全部訂單明細」找出電腦沒有的那一張。<br>' + line);
     } else {
-      showMsg(el, 'ok', '✓ ' + line + '張數一致，電腦沒有漏登訂單。');
+      showMsg(el, 'note', line);
     }
   }
 
@@ -949,7 +942,7 @@
       tx: $('posTx').value === '' ? null : toInt($('posTx').value),
       returns: $('posReturns').value === '' ? null : toInt($('posReturns').value)
     };
-    // LinePay、Mitsui Pay、會員折抵不是收銀機裡的現金或刷卡簽單，不需點收，直接沿用 POS 的金額
+    // 會員折抵不是收進來的錢，不需點收，直接沿用 POS 的金額
     var actual = {
       cash: cashCounted - cashFloat,
       card: cards.reduce(function (s, c) { return s + c.amount; }, 0),
@@ -984,7 +977,7 @@
   }
 
   var CATS = ['cash', 'card', 'voucher', 'other'];
-  var CAT_NAMES = { cash: '現金', card: '刷卡', voucher: '禮券', other: '電子支付／折抵', total: '總額' };
+  var CAT_NAMES = { cash: '現金', card: '刷卡', voucher: '禮券', other: '會員折抵', total: '總額' };
 
   function compDiffOf(comp, pos) {
     var d = {};
@@ -1032,9 +1025,9 @@
     if (!posFilled) {
       hideMsg($('posCheck'));
     } else if (posSum === r.pos.total) {
-      showMsg($('posCheck'), 'ok', '✓ 現金＋刷卡＋禮券＋電子支付／折抵 ＝ 總額，對帳單數字輸入正確');
+      showMsg($('posCheck'), 'ok', '✓ 現金＋刷卡＋禮券＋會員折抵 ＝ 總額，對帳單數字輸入正確');
     } else {
-      showMsg($('posCheck'), 'warn', '⚠ 現金＋刷卡＋禮券＋電子支付／折抵 ＝ ' + fmt(posSum) + '，與總額 ' + fmt(r.pos.total) +
+      showMsg($('posCheck'), 'warn', '⚠ 現金＋刷卡＋禮券＋會員折抵 ＝ ' + fmt(posSum) + '，與總額 ' + fmt(r.pos.total) +
         ' 相差 ' + fmtDiff(r.pos.total - posSum) + '。請檢查是否打錯，或對帳單上還有其他付款方式。');
     }
 
@@ -1045,7 +1038,7 @@
     renderComp(r, posFilled);
 
     var items = [['現金', 'cash'], ['刷卡', 'card'], ['禮券', 'voucher']];
-    if (r.pos.other) items.push(['電子支付／折抵（不需點收）', 'other']);
+    if (r.pos.other) items.push(['會員折抵（不需點收）', 'other']);
     items.push(['總額', 'total']);
     $('compareRows').innerHTML = items.map(function (it) {
       var k = it[1], d = r.diff[k];
