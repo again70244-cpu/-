@@ -212,7 +212,7 @@
         <label>現金<input class="num" id="posCash" inputmode="numeric" type="number"></label>
         <label>刷卡<input class="num" id="posCard" inputmode="numeric" type="number"></label>
         <label>禮券<input class="num" id="posVoucher" inputmode="numeric" type="number"></label>
-        <label>其他（紅利折抵等）<input class="num" id="posOther" inputmode="numeric" type="number" placeholder="0"></label>
+        <label>LinePay／Mitsui Pay／會員折抵<input class="num" id="posOther" inputmode="numeric" type="number" placeholder="0"></label>
         <label>總額<input class="num" id="posTotal" inputmode="numeric" type="number"></label>
         <label>一般交易筆數<input class="num" id="posTx" inputmode="numeric" type="number" min="0"></label>
         <label>退貨筆數<input class="num" id="posReturns" inputmode="numeric" type="number" min="0"></label>
@@ -383,8 +383,8 @@
     '請只依照第 4 段「付款方式明細」分類金額（新台幣整數，去掉逗號）：',
     '- cash：名稱含「現金」的金額；第 4 段沒有現金這一行就填 0。',
     '- card：所有信用卡類付款的金額加總（例如聯合信用卡、各銀行信用卡、銀聯卡、國旅卡）；沒有就填 0。',
-    '- voucher：禮券類付款的金額加總（例如禮券、商品券、提貨券、禮物卡）；沒有就填 0。',
-    '- other：不屬於上面三類的付款方式金額加總（例如紅利折抵、點數折抵、電子支付、LINE Pay、悠遊卡）；沒有就填 0。',
+    '- voucher：禮券類付款的金額加總（例如三井電子抵用券、禮券、商品券、提貨券、禮物卡）；沒有就填 0。',
+    '- other：不屬於上面三類的付款方式金額加總（例如 LinePay、Mitsui Pay、會員折抵、紅利折抵、其他電子支付）；沒有就填 0。',
     '- total：第 4 段最後一行「總計」的金額。',
     '- salesTotal：第 3 段的「總計」金額。',
     '- 不屬於上面三類的付款方式，每一項也列在 others，label 用對帳單上的名稱。',
@@ -492,7 +492,7 @@
   function applyScan(res) {
     if (!res || typeof res !== 'object') throw { code: 'invalid_json' };
     var filled = [], missing = [];
-    var names = { cash: '現金', card: '刷卡', voucher: '禮券', other: '其他', total: '總額' };
+    var names = { cash: '現金', card: '刷卡', voucher: '禮券', other: '電子支付／折抵', total: '總額' };
     Object.keys(SCAN_FIELDS).forEach(function (k) {
       var el = $(SCAN_FIELDS[k]);
       var v = Number(res[k]);
@@ -585,7 +585,7 @@
     name = String(name || '');
     if (code === '01' || /現金/.test(name)) return 'cash';
     if (/信用卡|卡\(|銀聯|國旅/.test(name)) return 'card';
-    if (/禮券|禮物卡|提貨券|商品券/.test(name)) return 'voucher';
+    if (/禮券|禮物卡|提貨券|商品券|抵用券/.test(name)) return 'voucher';
     return 'other';
   }
 
@@ -949,7 +949,7 @@
       tx: $('posTx').value === '' ? null : toInt($('posTx').value),
       returns: $('posReturns').value === '' ? null : toInt($('posReturns').value)
     };
-    // 紅利折抵等「其他」不是收進來的錢，不需點收，直接沿用 POS 的金額
+    // LinePay、Mitsui Pay、會員折抵不是收銀機裡的現金或刷卡簽單，不需點收，直接沿用 POS 的金額
     var actual = {
       cash: cashCounted - cashFloat,
       card: cards.reduce(function (s, c) { return s + c.amount; }, 0),
@@ -984,7 +984,7 @@
   }
 
   var CATS = ['cash', 'card', 'voucher', 'other'];
-  var CAT_NAMES = { cash: '現金', card: '刷卡', voucher: '禮券', other: '其他', total: '總額' };
+  var CAT_NAMES = { cash: '現金', card: '刷卡', voucher: '禮券', other: '電子支付／折抵', total: '總額' };
 
   function compDiffOf(comp, pos) {
     var d = {};
@@ -1032,9 +1032,9 @@
     if (!posFilled) {
       hideMsg($('posCheck'));
     } else if (posSum === r.pos.total) {
-      showMsg($('posCheck'), 'ok', '✓ 現金＋刷卡＋禮券＋其他 ＝ 總額，對帳單數字輸入正確');
+      showMsg($('posCheck'), 'ok', '✓ 現金＋刷卡＋禮券＋電子支付／折抵 ＝ 總額，對帳單數字輸入正確');
     } else {
-      showMsg($('posCheck'), 'warn', '⚠ 現金＋刷卡＋禮券＋其他 ＝ ' + fmt(posSum) + '，與總額 ' + fmt(r.pos.total) +
+      showMsg($('posCheck'), 'warn', '⚠ 現金＋刷卡＋禮券＋電子支付／折抵 ＝ ' + fmt(posSum) + '，與總額 ' + fmt(r.pos.total) +
         ' 相差 ' + fmtDiff(r.pos.total - posSum) + '。請檢查是否打錯，或對帳單上還有其他付款方式。');
     }
 
@@ -1045,7 +1045,7 @@
     renderComp(r, posFilled);
 
     var items = [['現金', 'cash'], ['刷卡', 'card'], ['禮券', 'voucher']];
-    if (r.pos.other) items.push(['其他（不需點收）', 'other']);
+    if (r.pos.other) items.push(['電子支付／折抵（不需點收）', 'other']);
     items.push(['總額', 'total']);
     $('compareRows').innerHTML = items.map(function (it) {
       var k = it[1], d = r.diff[k];
